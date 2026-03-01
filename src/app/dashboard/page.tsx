@@ -12,6 +12,7 @@ interface EpisodeProgressView {
   number: number;
   ratio: number;
   completed: boolean;
+  started: boolean;
 }
 
 interface DayEpisode {
@@ -104,18 +105,45 @@ export default function DashboardPage() {
     const completedCount = progress.filter((p) => p.completed).length;
     const avgMinutesPerDay = Math.round(totalMinutes / daysSinceStart());
 
-    const episodeGrid: EpisodeProgressView[] = Array.from(
-      { length: TOTAL_EPISODES },
-      (_, i) => ({ number: i + 1, ratio: 0, completed: false })
-    );
+    const startedNumbers = new Set<number>();
+    const lastSessionPosByNumber = new Map<number, number>();
+    for (const s of sessions) {
+      const ep = byEpisodeId.get(s.episode_id);
+      if (!ep?.number) continue;
+      startedNumbers.add(ep.number);
+      const prev = lastSessionPosByNumber.get(ep.number) ?? 0;
+      lastSessionPosByNumber.set(ep.number, Math.max(prev, s.end_position_ms || 0));
+    }
+
+    const episodeGrid: EpisodeProgressView[] = Array.from({ length: TOTAL_EPISODES }, (_, i) => ({
+      number: i + 1,
+      ratio: 0,
+      completed: false,
+      started: false,
+    }));
     for (const p of progress) {
       const ep = byEpisodeId.get(p.episode_id);
       if (!ep) continue;
       const idx = ep.number - 1;
       if (idx < 0 || idx >= TOTAL_EPISODES) continue;
+      startedNumbers.add(ep.number);
       const durMs = (ep.duration_sec ?? 0) * 1000;
       const ratio = p.completed ? 1 : durMs > 0 ? Math.min(1, (p.last_position_ms || 0) / durMs) : 0;
-      episodeGrid[idx] = { number: ep.number, ratio, completed: !!p.completed };
+      episodeGrid[idx] = { number: ep.number, ratio, completed: !!p.completed, started: true };
+    }
+    for (const epNumber of startedNumbers) {
+      const idx = epNumber - 1;
+      if (idx < 0 || idx >= TOTAL_EPISODES) continue;
+      if (episodeGrid[idx].started) continue;
+      const durMs = (byNumber.get(epNumber)?.duration_sec ?? 0) * 1000;
+      const sessionPos = lastSessionPosByNumber.get(epNumber) ?? 0;
+      const ratio = durMs > 0 ? Math.min(1, sessionPos / durMs) : 0;
+      episodeGrid[idx] = {
+        number: epNumber,
+        ratio,
+        completed: ratio >= 0.95,
+        started: true,
+      };
     }
 
     const dayMap = new Map<string, Map<number, DayEpisode>>();
@@ -178,15 +206,18 @@ export default function DashboardPage() {
                           <div key={day.key} className="w-3">
                             <div className="h-12 flex flex-col-reverse items-center gap-0.5">
                               {day.episodes.slice(0, 4).map((ep) => (
-                                <MiniSquare key={`${day.key}_${ep.number}`} ratio={ep.ratio} completed={ep.completed} />
+                                <MiniSquare
+                                  key={`${day.key}_${ep.number}`}
+                                  ratio={ep.ratio}
+                                  completed={ep.completed}
+                                  started={true}
+                                />
                               ))}
-                            </div>
-                            <div className="text-[9px] text-gray-300 mt-1 text-center">
-                              {(i + 1) % 5 === 0 ? i + 1 : ""}
                             </div>
                           </div>
                         ))}
                       </div>
+                      <MonthAxis dayKeys={month.days.map((d) => d.key)} />
                     </div>
                   ))}
                 </div>
@@ -201,6 +232,7 @@ export default function DashboardPage() {
                     key={ep.number}
                     ratio={ep.ratio}
                     completed={ep.completed}
+                    started={ep.started}
                     title={`#${ep.number}`}
                   />
                 ))}
@@ -220,10 +252,6 @@ function dayKey(input: string | Date): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(input));
-}
-
-function monthKeyFromDay(key: string): string {
-  return key.slice(0, 7);
 }
 
 function monthLabel(key: string): string {
@@ -277,13 +305,43 @@ function Card({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MonthAxis({ dayKeys }: { dayKeys: string[] }) {
+  if (dayKeys.length === 0) return null;
+  const dayNums = dayKeys.map((k) => Number(k.slice(8, 10)));
+  const first = dayNums[0];
+  const last = dayNums[dayNums.length - 1];
+
+  return (
+    <div className="relative h-7">
+      <div className="absolute left-0 right-0 top-2 border-t border-black" />
+      {dayNums.map((day, idx) => {
+        const isLabel = day === first || day === last || day % 10 === 0;
+        if (!isLabel) return null;
+        const pct = dayNums.length === 1 ? 0 : (idx / (dayNums.length - 1)) * 100;
+        return (
+          <div
+            key={`${dayKeys[idx]}_tick`}
+            className="absolute top-0"
+            style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+          >
+            <div className="w-px h-2 bg-black mx-auto" />
+            <div className="text-[9px] leading-none text-gray-700 mt-0.5">{day}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MiniSquare({
   ratio,
   completed,
+  started,
   title,
 }: {
   ratio: number;
   completed: boolean;
+  started: boolean;
   title?: string;
 }) {
   const safeRatio = Math.max(0, Math.min(1, ratio));
@@ -297,8 +355,11 @@ function MiniSquare({
       </div>
     );
   }
+  if (!started) {
+    return <div title={title} className="w-3 h-3 rounded-[3px] bg-gray-200" />;
+  }
   return (
-    <div title={title} className="w-3 h-3 rounded-[3px] bg-amber-100 relative overflow-hidden">
+    <div title={title} className="w-3 h-3 rounded-[3px] bg-gray-200 relative overflow-hidden">
       <div
         className="absolute left-0 bottom-0 bg-amber-400"
         style={{ width: `${safeRatio * 100}%`, height: "100%" }}
