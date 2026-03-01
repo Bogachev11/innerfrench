@@ -126,6 +126,7 @@ export function EpisodePlayer({
   const [wordTranslation, setWordTranslation] = useState<WordTranslation | null>(null);
   const [wordLoading, setWordLoading] = useState(false);
   const [wordSaveMsg, setWordSaveMsg] = useState("");
+  const [savedWords, setSavedWords] = useState<Set<string>>(new Set());
   const displaySegments = splitForDisplay(segments);
 
   // Keep refs in sync with state
@@ -288,18 +289,31 @@ export function EpisodePlayer({
       context_fr: wordPanel.contextFr,
       context_ru: wordPanel.contextRu,
     });
-    setWordSaveMsg(error ? "Не удалось сохранить" : "Слово сохранено");
+    if (error) {
+      setWordSaveMsg("Не удалось сохранить");
+      return;
+    }
+    setSavedWords((prev) => {
+      const next = new Set(prev);
+      next.add(wordPanel.word.toLowerCase());
+      return next;
+    });
+    setWordSaveMsg("Слово сохранено");
   }
 
   function renderWordTokens(text: string, seg: DisplaySegment) {
     const tokens = text.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [text];
     return tokens.map((token, idx) => {
       if (/^[\p{L}][\p{L}'’-]*$/u.test(token)) {
+        const normalized = token.toLowerCase();
+        const isSaved = savedWords.has(normalized);
         return (
           <button
             key={`${seg.id}_${idx}`}
             type="button"
-            className="underline decoration-dotted underline-offset-2 hover:text-brand"
+            className={`rounded px-0.5 transition-colors hover:text-brand ${
+              isSaved ? "border border-black" : "border border-transparent"
+            }`}
             onClick={(e) => {
               e.stopPropagation();
               openWordPanel(token, seg);
@@ -338,6 +352,19 @@ export function EpisodePlayer({
         }
       });
   }, [episode.id]);
+
+  // Load saved words once: marked in all podcast pages
+  useEffect(() => {
+    const deviceId = getDeviceId();
+    supabase
+      .from("user_words")
+      .select("word")
+      .eq("device_id", deviceId)
+      .then(({ data }) => {
+        if (!data) return;
+        setSavedWords(new Set(data.map((r) => String(r.word).toLowerCase())));
+      });
+  }, []);
 
   const seek = useCallback((ms: number) => {
     if (audioRef.current) {
