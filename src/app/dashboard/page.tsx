@@ -272,18 +272,17 @@ function daysSinceStart(): number {
 }
 
 function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] {
-  const todayKey = dayKey(new Date());
   const out: MonthView[] = [];
 
   let cursor = START_KEY.slice(0, 7);
-  const endMonth = todayKey.slice(0, 7);
+  const endMonth = dayKey(new Date()).slice(0, 7);
   while (cursor <= endMonth) {
     const [yy, mm] = cursor.split("-").map(Number);
     const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
     const days: DayView[] = [];
     for (let day = 1; day <= daysInMonth; day++) {
       const key = `${yy}-${String(mm).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      if (key < START_KEY || key > todayKey) continue;
+      if (key < START_KEY) continue;
       const eps = [...(dayMap.get(key)?.values() ?? [])].sort((a, b) => a.number - b.number);
       days.push({ key, episodes: eps });
     }
@@ -318,11 +317,18 @@ function MonthAxis({ dayKeys }: { dayKeys: string[] }) {
         const isLabel = day === first || day === last || day % 10 === 0;
         if (!isLabel) return null;
         const pct = dayNums.length === 1 ? 0 : (idx / (dayNums.length - 1)) * 100;
+        const isFirst = day === first;
+        const isLast = day === last;
+        const style = isFirst
+          ? { left: "0%" }
+          : isLast
+            ? { left: "100%", transform: "translateX(-100%)" }
+            : { left: `${pct}%`, transform: "translateX(-50%)" };
         return (
           <div
             key={`${dayKeys[idx]}_tick`}
             className="absolute top-0"
-            style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+            style={style}
           >
             <div className="w-px h-2 bg-black mx-auto" />
             <div className="text-[9px] leading-none text-gray-700 mt-0.5">{day}</div>
