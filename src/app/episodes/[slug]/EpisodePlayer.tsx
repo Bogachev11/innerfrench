@@ -24,11 +24,19 @@ export function EpisodePlayer({
   const sessionId = useRef<string | null>(null);
   const sessionStart = useRef(0);
   const lastSavedMs = useRef(0);
+  const currentMsRef = useRef(0);
+  const playingRef = useRef(false);
+  const durationRef = useRef(episode.duration_sec ? episode.duration_sec * 1000 : 0);
 
   const [currentMs, setCurrentMs] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(episode.duration_sec ? episode.duration_sec * 1000 : 0);
+  const [duration, setDuration] = useState(durationRef.current);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Keep refs in sync with state
+  useEffect(() => { currentMsRef.current = currentMs; }, [currentMs]);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   const activeIdx = segments.findIndex(
     (s, i) =>
@@ -45,10 +53,10 @@ export function EpisodePlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const onTime = () => setCurrentMs(audio.currentTime * 1000);
-    const onDur = () => setDuration(audio.duration * 1000);
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const onTime = () => { const ms = audio.currentTime * 1000; currentMsRef.current = ms; setCurrentMs(ms); };
+    const onDur = () => { const ms = audio.duration * 1000; durationRef.current = ms; setDuration(ms); };
+    const onPlay = () => { playingRef.current = true; setPlaying(true); };
+    const onPause = () => { playingRef.current = false; setPlaying(false); };
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("durationchange", onDur);
     audio.addEventListener("play", onPlay);
@@ -61,19 +69,19 @@ export function EpisodePlayer({
     };
   }, []);
 
-  // Start session on play, close on pause/unmount
+  // Start session on play, close on pause
   useEffect(() => {
     if (playing && !sessionId.current) {
       const deviceId = getDeviceId();
       sessionStart.current = Date.now();
-      lastSavedMs.current = currentMs;
+      lastSavedMs.current = currentMsRef.current;
       supabase
         .from("listening_sessions")
         .insert({
           episode_id: episode.id,
           device_id: deviceId,
           started_at: new Date().toISOString(),
-          start_position_ms: Math.round(currentMs),
+          start_position_ms: Math.round(currentMsRef.current),
         })
         .select("id")
         .single()
@@ -93,59 +101,63 @@ export function EpisodePlayer({
       .from("listening_sessions")
       .update({
         ended_at: new Date().toISOString(),
-        end_position_ms: Math.round(currentMs),
+        end_position_ms: Math.round(currentMsRef.current),
         listened_ms: listened,
       })
       .eq("id", sessionId.current)
       .then(() => {});
+    saveProgress();
     sessionId.current = null;
   }
 
-  // Close session on unmount
   useEffect(() => () => closeSession(), []);
 
-  // Save progress every 10s while playing
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (!playing) return;
-      const deviceId = getDeviceId();
-      const pos = Math.round(currentMs);
-      const delta = Math.max(0, pos - lastSavedMs.current);
-      lastSavedMs.current = pos;
+  async function saveProgress() {
+    const deviceId = getDeviceId();
+    const pos = Math.round(currentMsRef.current);
+    const dur = durationRef.current;
+    const delta = Math.max(0, pos - lastSavedMs.current);
+    lastSavedMs.current = pos;
+    const completed = dur > 0 && pos >= dur * 0.95;
 
-      const { data: existing } = await supabase
+    const { data: existing } = await supabase
+      .from("episode_progress")
+      .select("total_listened_ms")
+      .eq("episode_id", episode.id)
+      .eq("device_id", deviceId)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
         .from("episode_progress")
-        .select("total_listened_ms")
-        .eq("episode_id", episode.id)
-        .eq("device_id", deviceId)
-        .single();
-
-      const completed = duration > 0 && pos >= duration * 0.95;
-
-      if (existing) {
-        await supabase
-          .from("episode_progress")
-          .update({
-            last_position_ms: pos,
-            total_listened_ms: existing.total_listened_ms + delta,
-            completed,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("episode_id", episode.id)
-          .eq("device_id", deviceId);
-      } else {
-        await supabase.from("episode_progress").insert({
-          episode_id: episode.id,
-          device_id: deviceId,
+        .update({
           last_position_ms: pos,
-          total_listened_ms: delta,
-          completed: false,
+          total_listened_ms: existing.total_listened_ms + delta,
+          completed,
           updated_at: new Date().toISOString(),
-        });
-      }
+        })
+        .eq("episode_id", episode.id)
+        .eq("device_id", deviceId);
+    } else {
+      await supabase.from("episode_progress").insert({
+        episode_id: episode.id,
+        device_id: deviceId,
+        last_position_ms: pos,
+        total_listened_ms: delta,
+        completed: false,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Save progress every 10s — no reactive deps, reads refs
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!playingRef.current) return;
+      saveProgress();
     }, 10000);
     return () => clearInterval(interval);
-  }, [playing, currentMs, episode.id, duration]);
+  }, [episode.id]);
 
   // Restore position
   useEffect(() => {
@@ -155,7 +167,7 @@ export function EpisodePlayer({
       .select("last_position_ms")
       .eq("episode_id", episode.id)
       .eq("device_id", deviceId)
-      .single()
+      .maybeSingle()
       .then(({ data }) => {
         if (data?.last_position_ms && audioRef.current) {
           audioRef.current.currentTime = data.last_position_ms / 1000;
