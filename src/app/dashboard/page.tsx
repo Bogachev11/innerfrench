@@ -70,13 +70,26 @@ export default function DashboardPage() {
     if (!deviceIdOverride && progress.length === 0 && sessions.length === 0) {
       const [allProgressIdsRes, allSessionIdsRes] = await Promise.all([
         supabase.from("episode_progress").select("device_id"),
-        supabase.from("listening_sessions").select("device_id"),
+        supabase.from("listening_sessions").select("device_id, listened_ms"),
       ]);
-      const ids = new Set<string>();
-      for (const row of allProgressIdsRes.data || []) ids.add(String(row.device_id));
-      for (const row of allSessionIdsRes.data || []) ids.add(String(row.device_id));
-      if (ids.size === 1) {
-        const adopted = [...ids][0];
+
+      const sessionTotals = new Map<string, number>();
+      for (const row of allSessionIdsRes.data || []) {
+        const key = String(row.device_id);
+        const prev = sessionTotals.get(key) ?? 0;
+        sessionTotals.set(key, prev + (row.listened_ms || 0));
+      }
+
+      let adopted = "";
+      if (sessionTotals.size > 0) {
+        adopted = [...sessionTotals.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      } else {
+        const ids = new Set<string>();
+        for (const row of allProgressIdsRes.data || []) ids.add(String(row.device_id));
+        if (ids.size > 0) adopted = [...ids][0];
+      }
+
+      if (adopted) {
         setDeviceId(adopted);
         return loadDashboard(adopted);
       }
