@@ -1,0 +1,9 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --color-brand: #3b82f6;
+  --color-brand-light: #dbeafe;
+  --color-muted: #94a3b8;
+}

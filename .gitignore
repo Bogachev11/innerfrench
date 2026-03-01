@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env*.local
+.cookies.json
+scripts/data/
+scripts/screenshots/
+scripts/_debug*
+supabase/.temp/
+test_*.py
+*.tsbuildinfo
