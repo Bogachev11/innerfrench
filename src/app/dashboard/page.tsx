@@ -196,43 +196,47 @@ export default function DashboardPage() {
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold text-gray-700">Дни и подкасты</h2>
-              <div className="overflow-x-auto pb-1">
-                <div className="inline-flex gap-4 min-w-max">
-                  {model.months.map((month) => (
-                    <div key={month.key} className="space-y-2">
-                      <div className="text-xs text-gray-500 font-medium">{month.label}</div>
-                      <div className="flex items-end gap-1">
-                        {month.days.map((day, i) => (
-                          <div key={day.key} className="w-3">
-                            <div className="h-12 flex flex-col-reverse items-center gap-0.5">
-                              {day.episodes.slice(0, 4).map((ep) => (
-                                <MiniSquare
-                                  key={`${day.key}_${ep.number}`}
-                                  ratio={ep.ratio}
-                                  completed={ep.completed}
-                                  started={true}
-                                />
-                              ))}
-                            </div>
+              <div className="space-y-4">
+                {model.months.map((month) => (
+                  <div key={month.key} className="space-y-2">
+                    <div className="text-xs text-gray-500 font-medium">{month.label}</div>
+                    <div
+                      className="grid gap-[1px]"
+                      style={{ gridTemplateColumns: `repeat(${month.days.length}, minmax(0, 1fr))` }}
+                    >
+                      {month.days.map((day) => (
+                        <div key={day.key} className="min-w-0">
+                          <div className="h-9 flex flex-col-reverse items-center gap-[1px]">
+                            {day.episodes.slice(0, 4).map((ep) => (
+                              <MiniSquare
+                                key={`${day.key}_${ep.number}`}
+                                ratio={ep.ratio}
+                                completed={ep.completed}
+                                started={true}
+                                size="xs"
+                              />
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                      <MonthAxis dayKeys={month.days.map((d) => d.key)} />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    <MonthAxis dayKeys={month.days.map((d) => d.key)} />
+                  </div>
+                ))}
               </div>
             </section>
 
             <section className="space-y-2 border-t border-gray-100 pt-4">
               <h2 className="text-sm font-semibold text-gray-700">Все эпизоды (1-190)</h2>
-              <div className="grid grid-cols-19 gap-1">
+              <div className="grid grid-cols-14 gap-[1px]">
                 {model.episodeGrid.map((ep) => (
                   <MiniSquare
                     key={ep.number}
                     ratio={ep.ratio}
                     completed={ep.completed}
                     started={ep.started}
+                    number={ep.number}
+                    size="md"
                     title={`#${ep.number}`}
                   />
                 ))}
@@ -343,33 +347,53 @@ function MiniSquare({
   ratio,
   completed,
   started,
+  number,
+  size = "xs",
   title,
 }: {
   ratio: number;
   completed: boolean;
   started: boolean;
+  number?: number;
+  size?: "xs" | "md";
   title?: string;
 }) {
   const safeRatio = Math.max(0, Math.min(1, ratio));
+  const isMd = size === "md";
+  const baseSize = isMd ? "w-5 h-5 rounded-[4px]" : "w-2 h-2 rounded-[2px]";
+  const textSize = isMd ? "text-[7px]" : "text-[6px]";
+
   if (completed) {
     return (
       <div
         title={title}
-        className="w-3 h-3 rounded-[3px] bg-emerald-500 text-white text-[8px] leading-3 text-center"
+        className={`${baseSize} bg-emerald-500 text-white ${textSize} leading-none flex items-center justify-center font-semibold`}
       >
-        ✓
+        {number ?? "✓"}
       </div>
     );
   }
   if (!started) {
-    return <div title={title} className="w-3 h-3 rounded-[3px] bg-gray-200" />;
+    return (
+      <div
+        title={title}
+        className={`${baseSize} bg-gray-200 text-gray-500 ${textSize} leading-none flex items-center justify-center font-medium`}
+      >
+        {number ?? ""}
+      </div>
+    );
   }
   return (
-    <div title={title} className="w-3 h-3 rounded-[3px] bg-gray-200 relative overflow-hidden">
+    <div title={title} className={`${baseSize} bg-gray-200 relative overflow-hidden`}>
       <div
         className="absolute left-0 bottom-0 bg-amber-400"
         style={{ width: `${safeRatio * 100}%`, height: "100%" }}
       />
+      {typeof number === "number" && (
+        <div className={`absolute inset-0 text-gray-700 ${textSize} leading-none flex items-center justify-center font-medium`}>
+          {number}
+        </div>
+      )}
     </div>
   );
 }
