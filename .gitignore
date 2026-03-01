@@ -8,3 +8,4 @@ scripts/_debug*
 supabase/.temp/
 test_*.py
 *.tsbuildinfo
+.vercel
