@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { getDeviceId } from "@/lib/device";
+import { getDeviceId, setDeviceId } from "@/lib/device";
 
 const TZ = "Europe/Paris";
 const START_KEY = "2026-03-01";
@@ -46,8 +46,8 @@ export default function DashboardPage() {
     loadDashboard();
   }, []);
 
-  async function loadDashboard() {
-    const deviceId = getDeviceId();
+  async function loadDashboard(deviceIdOverride?: string) {
+    const deviceId = deviceIdOverride ?? getDeviceId();
 
     const [progressRes, sessionsRes, episodesRes] = await Promise.all([
       supabase
@@ -61,9 +61,26 @@ export default function DashboardPage() {
       supabase.from("episodes").select("id, number, duration_sec").order("number"),
     ]);
 
-    const progress = progressRes.data || [];
-    const sessions = sessionsRes.data || [];
+    let progress = progressRes.data || [];
+    let sessions = sessionsRes.data || [];
     const episodes = episodesRes.data || [];
+
+    // If this browser got a new random device_id, but DB only has one device_id
+    // (single-user setup), adopt it so desktop/mobile show same stats.
+    if (!deviceIdOverride && progress.length === 0 && sessions.length === 0) {
+      const [allProgressIdsRes, allSessionIdsRes] = await Promise.all([
+        supabase.from("episode_progress").select("device_id"),
+        supabase.from("listening_sessions").select("device_id"),
+      ]);
+      const ids = new Set<string>();
+      for (const row of allProgressIdsRes.data || []) ids.add(String(row.device_id));
+      for (const row of allSessionIdsRes.data || []) ids.add(String(row.device_id));
+      if (ids.size === 1) {
+        const adopted = [...ids][0];
+        setDeviceId(adopted);
+        return loadDashboard(adopted);
+      }
+    }
     const byEpisodeId = new Map(episodes.map((e) => [e.id, e]));
     const byNumber = new Map<number, { duration_sec: number | null }>(
       episodes.map((e) => [e.number, { duration_sec: e.duration_sec }])

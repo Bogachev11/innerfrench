@@ -11,3 +11,8 @@ export function getDeviceId(): string {
   }
   return id;
 }
+
+export function setDeviceId(id: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(KEY, id);
+}
