@@ -22,13 +22,26 @@ async function main() {
   // 2. Player
   console.log("2. /episodes/01-learn-french-naturally");
   await page.goto("http://localhost:3000/episodes/01-learn-french-naturally", { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(SCREENSHOTS, "02_player.png") });
 
   const segCount = await page.locator(".grid.grid-cols-2").count();
   const hasAudio = (await page.locator("audio").count()) > 0;
   const hasPlay = (await page.locator("button").filter({ hasText: /▶/ }).count()) > 0;
   console.log(`   ${segCount} segments, audio: ${hasAudio}, play: ${hasPlay} ✓`);
+
+  // 2.1 Word tap -> translation panel -> save
+  console.log("2.1 Word translate popup");
+  const firstWord = page.locator("main .grid.grid-cols-2").first().locator("button").first();
+  await firstWord.click();
+  await page.waitForTimeout(1200);
+  const popupVisible = (await page.locator("text=Сохранить слово").count()) > 0;
+  console.log(`   Popup visible: ${popupVisible} ✓`);
+  if (popupVisible) {
+    await page.locator("text=Сохранить слово").first().click();
+    await page.waitForTimeout(600);
+  }
+  await page.screenshot({ path: path.join(SCREENSHOTS, "02b_word_popup.png") });
 
   // 3. Dashboard
   console.log("3. /dashboard");
@@ -38,8 +51,8 @@ async function main() {
 
   const bodyText = await page.locator("body").textContent();
   const hasStat = bodyText?.includes("Статистика");
-  const hasStreak = bodyText?.includes("Серия");
-  console.log(`   Stats page: ${hasStat}, streak: ${hasStreak} ✓`);
+  const hasAll190 = bodyText?.includes("1-190");
+  console.log(`   Stats page: ${hasStat}, 190-grid: ${hasAll190} ✓`);
 
   // 4. Check mobile scroll on player
   console.log("4. Player scroll test");

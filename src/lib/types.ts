@@ -28,3 +28,24 @@ export interface EpisodeProgress {
   completed: boolean;
   updated_at: string;
 }
+
+export interface Word {
+  id: string;
+  word: string;
+  lemma: string | null;
+  translation_ru: string | null;
+  created_at: string;
+}
+
+export interface UserWord {
+  id: string;
+  device_id: string;
+  episode_id: string;
+  segment_id: string;
+  word: string;
+  lemma: string | null;
+  translation_ru: string;
+  context_fr: string;
+  context_ru: string | null;
+  created_at: string;
+}

@@ -4,81 +4,115 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
 
-interface Stats {
+const TZ = "Europe/Paris";
+const START_KEY = "2026-03-01";
+const TOTAL_EPISODES = 190;
+
+interface EpisodeProgressView {
+  number: number;
+  ratio: number;
+  completed: boolean;
+}
+
+interface DayEpisode {
+  number: number;
+  ratio: number;
+  completed: boolean;
+}
+
+interface DayView {
+  key: string;
+  episodes: DayEpisode[];
+}
+
+interface MonthView {
+  key: string; // YYYY-MM
+  label: string;
+  days: DayView[];
+}
+
+interface DashboardModel {
   totalMinutes: number;
-  last7dMinutes: number;
-  last30dMinutes: number;
-  streak: number;
-  started: number;
-  completed: number;
-  total: number;
+  completedCount: number;
+  avgMinutesPerDay: number;
+  months: MonthView[];
+  episodeGrid: EpisodeProgressView[];
 }
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [model, setModel] = useState<DashboardModel | null>(null);
 
   useEffect(() => {
-    loadStats();
+    loadDashboard();
   }, []);
 
-  async function loadStats() {
+  async function loadDashboard() {
     const deviceId = getDeviceId();
 
-    const [progressRes, sessionsRes, totalRes] = await Promise.all([
+    const [progressRes, sessionsRes, episodesRes] = await Promise.all([
       supabase
         .from("episode_progress")
-        .select("episode_id, total_listened_ms, completed")
+        .select("episode_id, last_position_ms, completed")
         .eq("device_id", deviceId),
       supabase
         .from("listening_sessions")
-        .select("started_at, listened_ms")
+        .select("episode_id, started_at, listened_ms, end_position_ms")
         .eq("device_id", deviceId),
-      supabase.from("episodes").select("id", { count: "exact", head: true }),
+      supabase.from("episodes").select("id, number, duration_sec").order("number"),
     ]);
 
     const progress = progressRes.data || [];
     const sessions = sessionsRes.data || [];
-    const total = totalRes.count || 0;
+    const episodes = episodesRes.data || [];
+    const byEpisodeId = new Map(episodes.map((e) => [e.id, e]));
+    const byNumber = new Map<number, { duration_sec: number | null }>(
+      episodes.map((e) => [e.number, { duration_sec: e.duration_sec }])
+    );
 
-    const totalMs = progress.reduce((s, p) => s + (p.total_listened_ms || 0), 0);
-    const completed = progress.filter((p) => p.completed).length;
-    const started = progress.length;
+    const totalListenedMs = sessions.reduce((sum, s) => sum + (s.listened_ms || 0), 0);
+    const totalMinutes = Math.round(totalListenedMs / 60000);
+    const completedCount = progress.filter((p) => p.completed).length;
+    const avgMinutesPerDay = Math.round(totalMinutes / daysSinceStart());
 
-    const now = new Date();
-    const d7 = new Date(now.getTime() - 7 * 86400000);
-    const d30 = new Date(now.getTime() - 30 * 86400000);
+    const episodeGrid: EpisodeProgressView[] = Array.from(
+      { length: TOTAL_EPISODES },
+      (_, i) => ({ number: i + 1, ratio: 0, completed: false })
+    );
+    for (const p of progress) {
+      const ep = byEpisodeId.get(p.episode_id);
+      if (!ep) continue;
+      const idx = ep.number - 1;
+      if (idx < 0 || idx >= TOTAL_EPISODES) continue;
+      const durMs = (ep.duration_sec ?? 0) * 1000;
+      const ratio = p.completed ? 1 : durMs > 0 ? Math.min(1, (p.last_position_ms || 0) / durMs) : 0;
+      episodeGrid[idx] = { number: ep.number, ratio, completed: !!p.completed };
+    }
 
-    let ms7 = 0, ms30 = 0;
+    const dayMap = new Map<string, Map<number, DayEpisode>>();
     for (const s of sessions) {
-      const d = new Date(s.started_at);
-      const ms = s.listened_ms || 0;
-      if (d >= d30) ms30 += ms;
-      if (d >= d7) ms7 += ms;
+      const ep = byEpisodeId.get(s.episode_id);
+      if (!ep?.number) continue;
+      const key = dayKey(s.started_at);
+      const durMs = Math.max(1, (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000);
+      const ratio = Math.min(1, (s.end_position_ms || 0) / durMs);
+      const completed = ratio >= 0.95;
+
+      if (!dayMap.has(key)) dayMap.set(key, new Map());
+      const perEpisode = dayMap.get(key)!;
+      const prev = perEpisode.get(ep.number);
+      if (!prev || ratio > prev.ratio || (completed && !prev.completed)) {
+        perEpisode.set(ep.number, { number: ep.number, ratio, completed });
+      }
     }
 
-    // Streak: consecutive days with sessions
-    const daySet = new Set<string>();
-    for (const s of sessions) {
-      const d = new Date(s.started_at);
-      daySet.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-    }
-    let streak = 0;
-    const today = new Date();
-    for (let i = 0; i < 365; i++) {
-      const d = new Date(today.getTime() - i * 86400000);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      if (daySet.has(key)) streak++;
-      else if (i > 0) break;
-    }
+    const months = buildMonths(dayMap);
 
-    setStats({
-      totalMinutes: Math.round(totalMs / 60000),
-      last7dMinutes: Math.round(ms7 / 60000),
-      last30dMinutes: Math.round(ms30 / 60000),
-      streak,
-      started,
-      completed,
-      total,
+    setModel({
+      totalMinutes,
+      completedCount,
+      avgMinutesPerDay,
+      months,
+      episodeGrid,
     });
   }
 
@@ -92,30 +126,56 @@ export default function DashboardPage() {
         </div>
       </header>
       <main className="max-w-2xl mx-auto px-4 py-6">
-        {!stats ? (
+        {!model ? (
           <p className="text-center text-muted py-12">Загрузка...</p>
         ) : (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-3">
-              <Card label="Серия (дни)" value={stats.streak} />
-              <Card label="Всего мин." value={stats.totalMinutes} />
-              <Card label="Мин. за 7 дн." value={stats.last7dMinutes} />
-              <Card label="Мин. за 30 дн." value={stats.last30dMinutes} />
+          <div className="space-y-7">
+            <div className="grid grid-cols-3 gap-2">
+              <Card label="Всего минут" value={String(model.totalMinutes)} />
+              <Card label="Послушано" value={`${model.completedCount}/${TOTAL_EPISODES}`} />
+              <Card label="Среднее / день" value={String(model.avgMinutesPerDay)} />
             </div>
-            <div className="border-t border-gray-100 pt-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">Прогресс эпизодов</h2>
-              <div className="flex items-center gap-4 text-sm">
-                <span className="text-muted">Начато: <b className="text-gray-900">{stats.started}</b></span>
-                <span className="text-muted">Завершено: <b className="text-gray-900">{stats.completed}</b></span>
-                <span className="text-muted">Всего: <b className="text-gray-900">{stats.total}</b></span>
+
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-gray-700">Дни и подкасты</h2>
+              <div className="overflow-x-auto pb-1">
+                <div className="inline-flex gap-4 min-w-max">
+                  {model.months.map((month) => (
+                    <div key={month.key} className="space-y-2">
+                      <div className="text-xs text-gray-500 font-medium">{month.label}</div>
+                      <div className="flex items-end gap-1">
+                        {month.days.map((day, i) => (
+                          <div key={day.key} className="w-3">
+                            <div className="h-12 flex flex-col-reverse items-center gap-0.5">
+                              {day.episodes.slice(0, 4).map((ep) => (
+                                <MiniSquare key={`${day.key}_${ep.number}`} ratio={ep.ratio} completed={ep.completed} />
+                              ))}
+                            </div>
+                            <div className="text-[9px] text-gray-300 mt-1 text-center">
+                              {(i + 1) % 5 === 0 ? i + 1 : ""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-brand rounded-full transition-all"
-                  style={{ width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%` }}
-                />
+            </section>
+
+            <section className="space-y-2 border-t border-gray-100 pt-4">
+              <h2 className="text-sm font-semibold text-gray-700">Все эпизоды (1-190)</h2>
+              <div className="grid grid-cols-19 gap-1">
+                {model.episodeGrid.map((ep) => (
+                  <MiniSquare
+                    key={ep.number}
+                    ratio={ep.ratio}
+                    completed={ep.completed}
+                    title={`#${ep.number}`}
+                  />
+                ))}
               </div>
-            </div>
+            </section>
           </div>
         )}
       </main>
@@ -123,11 +183,96 @@ export default function DashboardPage() {
   );
 }
 
-function Card({ label, value }: { label: string; value: number }) {
+function dayKey(input: string | Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(input));
+}
+
+function monthKeyFromDay(key: string): string {
+  return key.slice(0, 7);
+}
+
+function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, 1));
+  return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" }).format(d);
+}
+
+function keyToUtcMs(key: string): number {
+  const [y, m, d] = key.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+function daysSinceStart(): number {
+  const today = dayKey(new Date());
+  const diff = keyToUtcMs(today) - keyToUtcMs(START_KEY);
+  return Math.max(1, Math.floor(diff / 86400000) + 1);
+}
+
+function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] {
+  const todayKey = dayKey(new Date());
+  const out: MonthView[] = [];
+
+  let cursor = START_KEY.slice(0, 7);
+  const endMonth = todayKey.slice(0, 7);
+  while (cursor <= endMonth) {
+    const [yy, mm] = cursor.split("-").map(Number);
+    const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+    const days: DayView[] = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const key = `${yy}-${String(mm).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (key < START_KEY || key > todayKey) continue;
+      const eps = [...(dayMap.get(key)?.values() ?? [])].sort((a, b) => a.number - b.number);
+      days.push({ key, episodes: eps });
+    }
+    out.push({ key: cursor, label: monthLabel(cursor), days });
+    const nextMonthDate = new Date(Date.UTC(yy, mm, 1));
+    const ny = nextMonthDate.getUTCFullYear();
+    const nm = nextMonthDate.getUTCMonth() + 1;
+    cursor = `${ny}-${String(nm).padStart(2, "0")}`;
+  }
+  return out;
+}
+
+function Card({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-50 rounded-xl px-4 py-3">
-      <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
-      <div className="text-xs text-muted mt-0.5">{label}</div>
+    <div className="bg-gray-50 rounded-xl px-2.5 py-3">
+      <div className="text-lg font-bold text-gray-900 tabular-nums">{value}</div>
+      <div className="text-[11px] text-muted mt-0.5 leading-tight">{label}</div>
+    </div>
+  );
+}
+
+function MiniSquare({
+  ratio,
+  completed,
+  title,
+}: {
+  ratio: number;
+  completed: boolean;
+  title?: string;
+}) {
+  const safeRatio = Math.max(0, Math.min(1, ratio));
+  if (completed) {
+    return (
+      <div
+        title={title}
+        className="w-3 h-3 rounded-[3px] bg-emerald-500 text-white text-[8px] leading-3 text-center"
+      >
+        ✓
+      </div>
+    );
+  }
+  return (
+    <div title={title} className="w-3 h-3 rounded-[3px] bg-amber-100 relative overflow-hidden">
+      <div
+        className="absolute left-0 bottom-0 bg-amber-400"
+        style={{ width: `${safeRatio * 100}%`, height: "100%" }}
+      />
     </div>
   );
 }

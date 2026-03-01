@@ -5,11 +5,101 @@ import type { Episode, Segment } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
 
+interface DisplaySegment {
+  id: string;
+  source_segment_id: string;
+  start_ms: number;
+  end_ms: number;
+  fr_text: string;
+  ru_text: string | null;
+}
+
+interface WordPanelState {
+  word: string;
+  segmentId: string;
+  contextFr: string;
+  contextRu: string | null;
+}
+
+interface WordTranslation {
+  translation: string;
+  lemma: string;
+  short_note: string;
+}
+
 function formatTime(ms: number) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function splitTextIntoParts(text: string, parts: number): string[] {
+  const cleaned = text.trim();
+  if (parts <= 1 || cleaned.length < 40) return [cleaned];
+
+  const sentenceParts = cleaned
+    .split(/(?<=[.!?;:])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (sentenceParts.length >= parts) {
+    const out: string[] = [];
+    let cursor = 0;
+    for (let i = 0; i < parts; i++) {
+      const remaining = sentenceParts.length - cursor;
+      const bucketsLeft = parts - i;
+      const take = Math.ceil(remaining / bucketsLeft);
+      out.push(sentenceParts.slice(cursor, cursor + take).join(" "));
+      cursor += take;
+    }
+    return out;
+  }
+
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cursor = 0;
+  for (let i = 0; i < parts; i++) {
+    const remaining = words.length - cursor;
+    const bucketsLeft = parts - i;
+    const take = Math.max(1, Math.ceil(remaining / bucketsLeft));
+    out.push(words.slice(cursor, cursor + take).join(" "));
+    cursor += take;
+  }
+  return out;
+}
+
+function splitForDisplay(segments: Segment[]): DisplaySegment[] {
+  const out: DisplaySegment[] = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const nextStart = segments[i + 1]?.start_ms;
+    const safeEnd = seg.end_ms ?? nextStart ?? seg.start_ms + 12000;
+    const dur = Math.max(1000, safeEnd - seg.start_ms);
+
+    let parts = 1;
+    if (dur >= 14000 || seg.fr_text.length >= 140) parts = 2;
+    if (dur >= 26000 || seg.fr_text.length >= 260) parts = 3;
+
+    const frParts = splitTextIntoParts(seg.fr_text, parts);
+    const ruParts = seg.ru_text ? splitTextIntoParts(seg.ru_text, parts) : [];
+
+    for (let p = 0; p < parts; p++) {
+      const pStart = seg.start_ms + Math.floor((dur * p) / parts);
+      const pEnd = p === parts - 1 ? safeEnd : seg.start_ms + Math.floor((dur * (p + 1)) / parts);
+      out.push({
+        id: `${seg.id}_${p}`,
+        source_segment_id: seg.id,
+        start_ms: pStart,
+        end_ms: pEnd,
+        fr_text: frParts[p] ?? frParts[frParts.length - 1] ?? seg.fr_text,
+        ru_text: ruParts.length ? (ruParts[p] ?? ruParts[ruParts.length - 1] ?? null) : null,
+      });
+    }
+  }
+
+  return out;
 }
 
 export function EpisodePlayer({
@@ -32,16 +122,21 @@ export function EpisodePlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(durationRef.current);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [wordPanel, setWordPanel] = useState<WordPanelState | null>(null);
+  const [wordTranslation, setWordTranslation] = useState<WordTranslation | null>(null);
+  const [wordLoading, setWordLoading] = useState(false);
+  const [wordSaveMsg, setWordSaveMsg] = useState("");
+  const displaySegments = splitForDisplay(segments);
 
   // Keep refs in sync with state
   useEffect(() => { currentMsRef.current = currentMs; }, [currentMs]);
   useEffect(() => { playingRef.current = playing; }, [playing]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
-  const activeIdx = segments.findIndex(
+  const activeIdx = displaySegments.findIndex(
     (s, i) =>
       currentMs >= s.start_ms &&
-      (s.end_ms ? currentMs < s.end_ms : i === segments.length - 1 || currentMs < (segments[i + 1]?.start_ms ?? Infinity))
+      (s.end_ms ? currentMs < s.end_ms : i === displaySegments.length - 1 || currentMs < (displaySegments[i + 1]?.start_ms ?? Infinity))
   );
 
   useEffect(() => {
@@ -150,6 +245,74 @@ export function EpisodePlayer({
     }
   }
 
+  async function openWordPanel(word: string, seg: DisplaySegment) {
+    setWordPanel({
+      word,
+      segmentId: seg.source_segment_id,
+      contextFr: seg.fr_text,
+      contextRu: seg.ru_text,
+    });
+    setWordTranslation(null);
+    setWordSaveMsg("");
+    setWordLoading(true);
+
+    try {
+      const res = await fetch("/api/word-translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ word, contextFr: seg.fr_text }),
+      });
+      const data = await res.json();
+      setWordTranslation({
+        translation: data.translation || "",
+        lemma: data.lemma || word,
+        short_note: data.short_note || "",
+      });
+    } catch {
+      setWordTranslation({ translation: "Ошибка перевода", lemma: word, short_note: "" });
+    } finally {
+      setWordLoading(false);
+    }
+  }
+
+  async function saveWord() {
+    if (!wordPanel || !wordTranslation) return;
+    const deviceId = getDeviceId();
+    const { error } = await supabase.from("user_words").insert({
+      device_id: deviceId,
+      episode_id: episode.id,
+      segment_id: wordPanel.segmentId,
+      word: wordPanel.word.toLowerCase(),
+      lemma: wordTranslation.lemma,
+      translation_ru: wordTranslation.translation,
+      context_fr: wordPanel.contextFr,
+      context_ru: wordPanel.contextRu,
+    });
+    setWordSaveMsg(error ? "Не удалось сохранить" : "Слово сохранено");
+  }
+
+  function renderWordTokens(text: string, seg: DisplaySegment) {
+    const tokens = text.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [text];
+    return tokens.map((token, idx) => {
+      if (/^[\p{L}][\p{L}'’-]*$/u.test(token)) {
+        return (
+          <button
+            key={`${seg.id}_${idx}`}
+            type="button"
+            className="underline decoration-dotted underline-offset-2 hover:text-brand"
+            onClick={(e) => {
+              e.stopPropagation();
+              openWordPanel(token, seg);
+            }}
+          >
+            {token}
+          </button>
+        );
+      }
+      return <span key={`${seg.id}_${idx}`}>{token}</span>;
+    });
+  }
+
   // Save progress every 10s — no reactive deps, reads refs
   useEffect(() => {
     const interval = setInterval(() => {
@@ -219,7 +382,7 @@ export function EpisodePlayer({
 
       <main className="flex-1 overflow-y-auto px-4 py-4 pb-36">
         <div className="max-w-4xl mx-auto space-y-1">
-          {segments.map((seg, i) => {
+          {displaySegments.map((seg, i) => {
             const isActive = i === activeIdx;
             return (
               <div
@@ -234,7 +397,7 @@ export function EpisodePlayer({
                   <span className="text-[10px] text-muted tabular-nums mr-1">
                     {formatTime(seg.start_ms)}
                   </span>
-                  {seg.fr_text}
+                  {renderWordTokens(seg.fr_text, seg)}
                 </div>
                 <div className="text-sm leading-relaxed text-gray-500">
                   {seg.ru_text || (
@@ -279,6 +442,41 @@ export function EpisodePlayer({
           </span>
         </div>
       </div>
+
+      {wordPanel && (
+        <div className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-gray-200 shadow-2xl p-4">
+          <div className="max-w-4xl mx-auto space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-gray-900">{wordPanel.word}</div>
+              <button
+                type="button"
+                className="text-xs text-gray-500"
+                onClick={() => setWordPanel(null)}
+              >
+                Закрыть
+              </button>
+            </div>
+            <div className="text-sm text-gray-700">
+              {wordLoading ? "Переводим..." : (wordTranslation?.translation || "Нет перевода")}
+            </div>
+            {wordTranslation?.short_note && (
+              <div className="text-xs text-gray-500">{wordTranslation.short_note}</div>
+            )}
+            <div className="text-xs text-gray-500 line-clamp-2">{wordPanel.contextFr}</div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-xs px-3 py-1.5 rounded bg-brand text-white disabled:opacity-50"
+                disabled={wordLoading || !wordTranslation}
+                onClick={saveWord}
+              >
+                Сохранить слово
+              </button>
+              {wordSaveMsg && <span className="text-xs text-gray-500">{wordSaveMsg}</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       <audio ref={audioRef} src={episode.audio_url || ""} preload="metadata" />
     </div>

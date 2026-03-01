@@ -26,6 +26,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://wrrlqnrvkeadawseyyyb.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_ROLE_KEY=<service role key>
 SUPABASE_DB_PASSWORD=<пароль БД>
+OPENAI_API_KEY=<openai key для перевода слов>
 ```
 
 Ключи берутся из Supabase Dashboard → Settings → API.
@@ -36,8 +37,10 @@ SUPABASE_DB_PASSWORD=<пароль БД>
 npx tsx scripts/runMigration.ts
 ```
 
-Создаёт таблицы: `episodes`, `segments`, `episode_progress`, `listening_sessions`.
-RLS-политики применяются из `supabase/migrations/002_rls.sql`.
+Применяет все SQL-файлы из `supabase/migrations/` по порядку:
+- `001_schema.sql` — базовые таблицы (`episodes`, `segments`, `episode_progress`, `listening_sessions`)
+- `002_rls.sql` — RLS-политики для MVP
+- `003_vocab.sql` — таблицы словаря (`words`, `user_words`)
 
 ## 4. Импорт эпизодов
 
@@ -131,8 +134,9 @@ vercel --yes --prod
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | Production |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Production |
+| `OPENAI_API_KEY` | Production |
 
-`SUPABASE_SERVICE_ROLE_KEY` на Vercel **не нужен** (используется только в скриптах локально).
+`SUPABASE_SERVICE_ROLE_KEY` на Vercel **не нужен** (используется только в локальных скриптах импорта/админки).
 
 ### Последующие деплои
 
@@ -166,6 +170,7 @@ SSL выпускается автоматически.
 ```
 src/
   app/
+    api/word-translate/— серверный перевод слова (OpenAI)
     episodes/          — список эпизодов
     episodes/[slug]/   — плеер с транскриптом
     dashboard/         — статистика
@@ -185,7 +190,7 @@ scripts/
   translate_neural.py  — нейросетевой перевод FR→RU
   runMigration.ts      — применение SQL-миграций
 supabase/
-  migrations/          — SQL-схема и RLS
+  migrations/          — SQL-схема, RLS, словарь
 ```
 
 ## URL
