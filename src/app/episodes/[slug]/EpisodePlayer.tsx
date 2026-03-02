@@ -5,15 +5,6 @@ import type { Episode, Segment } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
 
-interface DisplaySegment {
-  id: string;
-  source_segment_id: string;
-  start_ms: number;
-  end_ms: number;
-  fr_text: string;
-  ru_text: string | null;
-}
-
 interface WordPanelState {
   word: string;
   segmentId: string;
@@ -32,74 +23,6 @@ function formatTime(ms: number) {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${sec.toString().padStart(2, "0")}`;
-}
-
-function splitTextIntoParts(text: string, parts: number): string[] {
-  const cleaned = text.trim();
-  if (parts <= 1 || cleaned.length < 40) return [cleaned];
-
-  const sentenceParts = cleaned
-    .split(/(?<=[.!?;:])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (sentenceParts.length >= parts) {
-    const out: string[] = [];
-    let cursor = 0;
-    for (let i = 0; i < parts; i++) {
-      const remaining = sentenceParts.length - cursor;
-      const bucketsLeft = parts - i;
-      const take = Math.ceil(remaining / bucketsLeft);
-      out.push(sentenceParts.slice(cursor, cursor + take).join(" "));
-      cursor += take;
-    }
-    return out;
-  }
-
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const out: string[] = [];
-  let cursor = 0;
-  for (let i = 0; i < parts; i++) {
-    const remaining = words.length - cursor;
-    const bucketsLeft = parts - i;
-    const take = Math.max(1, Math.ceil(remaining / bucketsLeft));
-    out.push(words.slice(cursor, cursor + take).join(" "));
-    cursor += take;
-  }
-  return out;
-}
-
-function splitForDisplay(segments: Segment[]): DisplaySegment[] {
-  const out: DisplaySegment[] = [];
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    const nextStart = segments[i + 1]?.start_ms;
-    const safeEnd = seg.end_ms ?? nextStart ?? seg.start_ms + 12000;
-    const dur = Math.max(1000, safeEnd - seg.start_ms);
-
-    let parts = 1;
-    if (dur >= 14000 || seg.fr_text.length >= 140) parts = 2;
-    if (dur >= 26000 || seg.fr_text.length >= 260) parts = 3;
-
-    const frParts = splitTextIntoParts(seg.fr_text, parts);
-    const ruParts = seg.ru_text ? splitTextIntoParts(seg.ru_text, parts) : [];
-
-    for (let p = 0; p < parts; p++) {
-      const pStart = seg.start_ms + Math.floor((dur * p) / parts);
-      const pEnd = p === parts - 1 ? safeEnd : seg.start_ms + Math.floor((dur * (p + 1)) / parts);
-      out.push({
-        id: `${seg.id}_${p}`,
-        source_segment_id: seg.id,
-        start_ms: pStart,
-        end_ms: pEnd,
-        fr_text: frParts[p] ?? frParts[frParts.length - 1] ?? seg.fr_text,
-        ru_text: ruParts.length ? (ruParts[p] ?? ruParts[ruParts.length - 1] ?? null) : null,
-      });
-    }
-  }
-
-  return out;
 }
 
 export function EpisodePlayer({
@@ -127,17 +50,16 @@ export function EpisodePlayer({
   const [wordLoading, setWordLoading] = useState(false);
   const [wordSaveMsg, setWordSaveMsg] = useState("");
   const [savedWords, setSavedWords] = useState<Set<string>>(new Set());
-  const displaySegments = splitForDisplay(segments);
 
   // Keep refs in sync with state
   useEffect(() => { currentMsRef.current = currentMs; }, [currentMs]);
   useEffect(() => { playingRef.current = playing; }, [playing]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
-  const activeIdx = displaySegments.findIndex(
+  const activeIdx = segments.findIndex(
     (s, i) =>
       currentMs >= s.start_ms &&
-      (s.end_ms ? currentMs < s.end_ms : i === displaySegments.length - 1 || currentMs < (displaySegments[i + 1]?.start_ms ?? Infinity))
+      (s.end_ms ? currentMs < s.end_ms : i === segments.length - 1 || currentMs < (segments[i + 1]?.start_ms ?? Infinity))
   );
 
   useEffect(() => {
@@ -246,10 +168,10 @@ export function EpisodePlayer({
     }
   }
 
-  async function openWordPanel(word: string, seg: DisplaySegment) {
+  async function openWordPanel(word: string, seg: Segment) {
     setWordPanel({
       word,
-      segmentId: seg.source_segment_id,
+      segmentId: seg.id,
       contextFr: seg.fr_text,
       contextRu: seg.ru_text,
     });
@@ -301,7 +223,7 @@ export function EpisodePlayer({
     setWordSaveMsg("Слово сохранено");
   }
 
-  function renderWordTokens(text: string, seg: DisplaySegment) {
+  function renderWordTokens(text: string, seg: Segment) {
     const tokens = text.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [text];
     return tokens.map((token, idx) => {
       if (/^[\p{L}][\p{L}'’-]*$/u.test(token)) {
@@ -409,7 +331,7 @@ export function EpisodePlayer({
 
       <main className="flex-1 overflow-y-auto px-4 py-4 pb-36">
         <div className="max-w-4xl mx-auto space-y-1">
-          {displaySegments.map((seg, i) => {
+          {segments.map((seg, i) => {
             const isActive = i === activeIdx;
             return (
               <div
