@@ -44,6 +44,7 @@ class Chunk:
   start_ms: int
   end_ms: int
   fr_text: str
+  ru_text: str | None = None
 
 
 def split_sentences(text: str) -> List[str]:
@@ -170,6 +171,21 @@ def build_chunks_from_transcript(full_fr_text: str, cum_chars: List[int], cum_ms
   return chunks
 
 
+def attach_ru_by_overlap(chunks: List[Chunk], old_segments: List[dict]) -> None:
+  for c in chunks:
+    ru_parts: List[str] = []
+    for s in old_segments:
+      s_start = int(s.get("start_ms") or 0)
+      s_end = int(s.get("end_ms") or s_start)
+      overlap = max(0, min(c.end_ms, s_end) - max(c.start_ms, s_start))
+      if overlap <= 0:
+        continue
+      ru = (s.get("ru_text") or "").strip()
+      if ru:
+        ru_parts.append(ru)
+    c.ru_text = " ".join(ru_parts).strip() or None
+
+
 def main() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("--episode", type=int, required=True, help="Episode number")
@@ -206,6 +222,7 @@ def main() -> None:
     fallback_end_ms = asr_end_ms
 
   chunks = build_chunks_from_transcript(full_fr, cum_chars, cum_ms, fallback_end_ms)
+  attach_ru_by_overlap(chunks, segs)
   print(f"New chunks: {len(chunks)}")
 
   preview = [
@@ -214,6 +231,7 @@ def main() -> None:
       "start_ms": c.start_ms,
       "end_ms": c.end_ms,
       "fr_text": c.fr_text,
+      "ru_text": c.ru_text,
     }
     for c in chunks[:10]
   ]
@@ -233,7 +251,7 @@ def main() -> None:
       "start_ms": c.start_ms,
       "end_ms": c.end_ms,
       "fr_text": c.fr_text,
-      "ru_text": None,
+      "ru_text": c.ru_text,
     }
     for c in chunks
   ]
