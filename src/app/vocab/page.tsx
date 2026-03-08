@@ -257,11 +257,6 @@ export default function VocabPage() {
   return (
     <div className="min-h-screen">
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-        <h1 className="text-3xl font-bold">Words</h1>
-        <p className="text-base opacity-70">
-          Review cards • Learned {stats.mastered}/{stats.total} • Mastery {progressText}
-        </p>
-
         <div className="grid grid-cols-4 gap-2 max-w-lg">
           <Kpi value={String(stats.total)} label="Total" />
           <Kpi value={String(stats.due)} label="Due" />
@@ -276,25 +271,25 @@ export default function VocabPage() {
             No due words right now. Great job.
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 mb-1">Front</div>
-              <div className="text-2xl font-bold">{current.display_word}</div>
+          <div className="space-y-4">
+            <div className="bg-gray-50 rounded-xl p-6">
+              <div className="text-sm text-gray-500 mb-2">Front</div>
+              <div className="text-4xl font-bold">{current.display_word}</div>
             </div>
 
             {showAnswer && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="text-xs text-gray-500 mb-1">Back</div>
-                <div className="text-lg">{current.translation_ru || "—"}</div>
+              <div className="bg-gray-50 rounded-xl p-6">
+                <div className="text-sm text-gray-500 mb-2">Back</div>
+                <div className="text-2xl">{current.translation_ru || "—"}</div>
                 {infoByCanonical[current.canonical_key]?.grammar && (
-                  <div className="mt-3 text-sm text-gray-700">
+                  <div className="mt-4 text-base text-gray-700">
                     <span className="text-gray-500">Grammar: </span>
                     {infoByCanonical[current.canonical_key]?.grammar}
                   </div>
                 )}
                 {(infoByCanonical[current.canonical_key]?.example_fr ||
                   infoByCanonical[current.canonical_key]?.example_ru) && (
-                  <div className="mt-2 text-sm">
+                  <div className="mt-3 text-base">
                     <div className="text-gray-500">Example:</div>
                     {infoByCanonical[current.canonical_key]?.example_fr && (
                       <div className="text-gray-800">{infoByCanonical[current.canonical_key]?.example_fr}</div>
@@ -305,16 +300,16 @@ export default function VocabPage() {
                   </div>
                 )}
                 {infoLoading && !infoByCanonical[current.canonical_key] && (
-                  <div className="mt-2 text-xs text-gray-500">Loading grammar and example...</div>
+                  <div className="mt-3 text-sm text-gray-500">Loading grammar and example...</div>
                 )}
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex gap-3 flex-wrap">
               {!showAnswer ? (
                 <button
                   onClick={() => setShowAnswer(true)}
-                  className="rounded-lg px-4 py-2 bg-gray-900 text-white text-sm font-medium"
+                  className="rounded-xl px-6 py-4 bg-gray-900 text-white text-lg font-medium min-h-[52px]"
                 >
                   Show answer
                 </button>
@@ -322,13 +317,13 @@ export default function VocabPage() {
                 <>
                   <button
                     onClick={() => answerCard(false)}
-                    className="rounded-lg px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium"
+                    className="rounded-xl px-6 py-4 bg-gray-200 text-gray-800 text-lg font-medium min-h-[52px] flex-1 min-w-[140px]"
                   >
                     I did not know
                   </button>
                   <button
                     onClick={() => answerCard(true)}
-                    className="rounded-lg px-4 py-2 bg-gray-900 text-white text-sm font-medium"
+                    className="rounded-xl px-6 py-4 bg-gray-900 text-white text-lg font-medium min-h-[52px] flex-1 min-w-[140px]"
                   >
                     I knew it
                   </button>
@@ -344,9 +339,9 @@ export default function VocabPage() {
 
 function Kpi({ value, label }: { value: string; label: string }) {
   return (
-    <div className="bg-gray-50 p-2 rounded-lg">
-      <div className="text-xl font-bold text-gray-800 tabular-nums">{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
+    <div className="bg-gray-50 rounded-xl px-2.5 py-3">
+      <div className="text-lg font-bold text-gray-900 tabular-nums">{value}</div>
+      <div className="text-[11px] text-muted mt-0.5 leading-tight">{label}</div>
     </div>
   );
 }
