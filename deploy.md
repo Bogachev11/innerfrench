@@ -170,7 +170,13 @@ npm run dev
    git checkout develop
    ```
 
-4. **Проверить прод**: Vercel сам соберёт из `main`. Через 1–2 мин открыть https://innerfrench.bogachev.fr (или свой Production URL). Жёсткое обновление: Ctrl+F5.
+4. **Проверить прод**: Vercel сам соберёт из `main`. Через 1–2 мин открыть https://innerfrench.bogachev.fr. Жёсткое обновление: Ctrl+F5.
+
+5. **Если прод не обновился** (автодеплой с GitHub не сработал) — задеплоить вручную с main:
+   ```bash
+   git checkout main && git pull origin main && npx vercel --yes --prod && git checkout develop
+   ```
+   Проверка прода: `npx tsx scripts/testProd.ts` (при необходимости `PROD_URL=https://... npx tsx scripts/testProd.ts`).
 
 ### 7.3. Если на проде не видно обновлений
 
