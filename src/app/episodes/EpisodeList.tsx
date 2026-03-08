@@ -13,8 +13,10 @@ interface Progress {
   completed: boolean;
 }
 
+const C1_EPISODES = new Set([40, 74, 94, 96, 101, 105]);
+
 function formatMin(sec: number) {
-  return `${Math.floor(sec / 60)} мин`;
+  return `${Math.floor(sec / 60)} min`;
 }
 
 export function EpisodeList({ episodes }: { episodes: Episode[] }) {
@@ -34,7 +36,44 @@ export function EpisodeList({ episodes }: { episodes: Episode[] }) {
   }, []);
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-4">
+      <EpisodeGroup
+        label="A2 (débutant +)"
+        episodes={episodes.filter((ep) => ep.number >= 1 && ep.number <= 34 && !C1_EPISODES.has(ep.number))}
+        progress={progress}
+      />
+      <EpisodeGroup
+        label="B1 (intermédiaire -)"
+        episodes={episodes.filter((ep) => ep.number >= 35 && ep.number <= 79 && !C1_EPISODES.has(ep.number))}
+        progress={progress}
+      />
+      <EpisodeGroup
+        label="B2 (intermédiaire +)"
+        episodes={episodes.filter((ep) => ep.number >= 80 && !C1_EPISODES.has(ep.number))}
+        progress={progress}
+      />
+      <EpisodeGroup
+        label="C1 (avancé)"
+        episodes={episodes.filter((ep) => C1_EPISODES.has(ep.number))}
+        progress={progress}
+      />
+    </div>
+  );
+}
+
+function EpisodeGroup({
+  label,
+  episodes,
+  progress,
+}: {
+  label: string;
+  episodes: Episode[];
+  progress: Map<string, Progress>;
+}) {
+  if (episodes.length === 0) return null;
+  return (
+    <section className="space-y-1.5">
+      <h2 className="text-xs text-gray-600">{label}</h2>
       {episodes.map((ep) => {
         const p = progress.get(ep.id);
         const done = p?.completed ?? false;
@@ -49,20 +88,20 @@ export function EpisodeList({ episodes }: { episodes: Episode[] }) {
           >
             {/* Progress bar background */}
             <div
-              className={`absolute inset-0 transition-all ${done ? "bg-emerald-100" : "bg-amber-50"}`}
+              className={`absolute inset-0 transition-all ${done ? "bg-progress-done" : "bg-progress-warn"}`}
               style={{ width: done ? "100%" : `${pct}%` }}
             />
             <div className="absolute inset-0 bg-white/40" style={{ left: done ? "100%" : `${pct}%` }} />
 
             <div className="relative flex items-center gap-3 px-3 py-2.5">
               <span className={`text-xs font-semibold w-7 text-right tabular-nums ${done ? "text-emerald-600" : "text-gray-400"}`}>
-                {done ? "✓" : ep.number}
+                {ep.number}
               </span>
               <span className={`flex-1 text-sm leading-snug ${done ? "text-emerald-800" : "text-gray-900"}`}>
                 {ep.title}
               </span>
               {ep.duration_sec != null && ep.duration_sec > 0 && (
-                <span className={`text-xs whitespace-nowrap tabular-nums ${done ? "text-emerald-500" : "text-gray-400"}`}>
+                <span className={`text-xs whitespace-nowrap tabular-nums ${done ? "text-white" : "text-gray-400"}`}>
                   {formatMin(ep.duration_sec)}
                 </span>
               )}
@@ -70,6 +109,6 @@ export function EpisodeList({ episodes }: { episodes: Episode[] }) {
           </Link>
         );
       })}
-    </div>
+    </section>
   );
 }

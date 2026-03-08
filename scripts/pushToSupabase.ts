@@ -48,6 +48,14 @@ async function ensureSchema() {
 }
 
 async function pushEpisode(ep: EpisodeData) {
+  // Preserve existing duration if current payload has null duration.
+  const { data: existing } = await supabase
+    .from("episodes")
+    .select("duration_sec")
+    .eq("number", ep.number)
+    .maybeSingle();
+  const safeDuration = ep.duration_sec ?? existing?.duration_sec ?? null;
+
   // Upsert episode
   const { data: epRow, error: epErr } = await supabase
     .from("episodes")
@@ -58,7 +66,7 @@ async function pushEpisode(ep: EpisodeData) {
         slug: ep.slug,
         source_url: ep.source_url,
         audio_url: ep.audio_url,
-        duration_sec: ep.duration_sec,
+        duration_sec: safeDuration,
         published_at: ep.published_at,
       },
       { onConflict: "number" }

@@ -192,7 +192,7 @@ export function EpisodePlayer({
         short_note: data.short_note || "",
       });
     } catch {
-      setWordTranslation({ translation: "Ошибка перевода", lemma: word, short_note: "" });
+      setWordTranslation({ translation: "Translation error", lemma: word, short_note: "" });
     } finally {
       setWordLoading(false);
     }
@@ -212,7 +212,7 @@ export function EpisodePlayer({
       context_ru: wordPanel.contextRu,
     });
     if (error) {
-      setWordSaveMsg("Не удалось сохранить");
+      setWordSaveMsg("Failed to save");
       return;
     }
     setSavedWords((prev) => {
@@ -220,7 +220,7 @@ export function EpisodePlayer({
       next.add(wordPanel.word.toLowerCase());
       return next;
     });
-    setWordSaveMsg("Слово сохранено");
+    setWordSaveMsg("Word saved");
   }
 
   function renderWordTokens(text: string, seg: Segment) {
@@ -312,7 +312,7 @@ export function EpisodePlayer({
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-gray-100 px-4 py-2">
+      <header className="sticky top-12 z-10 bg-white/95 backdrop-blur border-b border-gray-100 px-4 py-2">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
           <a href="/episodes" className="text-brand text-sm font-medium">←</a>
           <h1 className="text-sm font-semibold truncate flex-1">
@@ -350,7 +350,7 @@ export function EpisodePlayer({
                 </div>
                 <div className="text-sm leading-relaxed text-gray-500">
                   {seg.ru_text || (
-                    <span className="text-gray-300 italic text-xs">Перевод скоро будет</span>
+                    <span className="text-gray-300 italic text-xs">Translation coming soon</span>
                   )}
                 </div>
               </div>
@@ -402,11 +402,11 @@ export function EpisodePlayer({
                 className="text-xs text-gray-500"
                 onClick={() => setWordPanel(null)}
               >
-                Закрыть
+                Close
               </button>
             </div>
             <div className="text-sm text-gray-700">
-              {wordLoading ? "Переводим..." : (wordTranslation?.translation || "Нет перевода")}
+              {wordLoading ? "Translating..." : (wordTranslation?.translation || "No translation")}
             </div>
             {wordTranslation?.short_note && (
               <div className="text-xs text-gray-500">{wordTranslation.short_note}</div>
@@ -419,7 +419,7 @@ export function EpisodePlayer({
                 disabled={wordLoading || !wordTranslation}
                 onClick={saveWord}
               >
-                Сохранить слово
+                Save word
               </button>
               {wordSaveMsg && <span className="text-xs text-gray-500">{wordSaveMsg}</span>}
             </div>
