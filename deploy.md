@@ -41,6 +41,7 @@ npx tsx scripts/runMigration.ts
 - `001_schema.sql` — базовые таблицы (`episodes`, `segments`, `episode_progress`, `listening_sessions`)
 - `002_rls.sql` — RLS-политики для MVP
 - `003_vocab.sql` — таблицы словаря (`words`, `user_words`)
+- `004_srs.sql` — прогресс повторений (`user_word_progress`)
 
 ## 4. Импорт эпизодов
 
@@ -63,10 +64,10 @@ npx tsx scripts/fetchEpisodeList.ts
 ### 4.3. Уточнение URL для нужных эпизодов
 
 ```bash
-npx tsx scripts/resolveUrls.ts
+npx tsx scripts/resolveUrls.ts 1 190
 ```
 
-Проверяет реальные URL через Playwright (нужны куки из шага 4.1).
+Обходит пагинацию `innerfrench.com/podcast` и обновляет реальные `source_url` в `scripts/data/episodes.json`.
 
 ### 4.4. Скрейпинг контента (транскрипт + аудио)
 
@@ -84,6 +85,19 @@ npx tsx scripts/pushToSupabase.ts
 ```
 
 Заливает эпизоды и сегменты в БД.
+
+### 4.6. Ночной батч с возобновлением после ошибок
+
+```bash
+# пример: обработать 13-190
+npx tsx scripts/nightBatch.ts --start 13 --end 190 --model tiny --continue-on-error --max-retries 2
+
+# если остановилось на ошибке/свет вырубился
+npx tsx scripts/nightBatch.ts --resume
+```
+
+Checkpoint сохраняется в `scripts/data/night_batch_state.json`.
+Список проблемных эпизодов пишется в поле `failed`.
 
 ## 5. Перевод FR → RU (нейросеть)
 
@@ -118,34 +132,53 @@ npm run dev
 
 Открыть http://localhost:3000
 
-## 7. Деплой на Vercel
+## 7. Деплой на прод (обязательный порядок)
 
-### Первый раз
+**Важно:** прод собирается **только с ветки `main`**. Никогда не пушить в main один файл — всегда смерживать **весь** `develop`, иначе на проде не будет зависимостей (recharts, TopTabs и т.д.) и билд упадёт или интерфейс будет старый.
 
-```bash
-vercel --yes --prod
-```
+### 7.1. Настройка Vercel (один раз)
 
-### Переменные на Vercel
+1. **Git**: Vercel Dashboard → Project → **Settings** → **Git** → **Production Branch** = `main`. Иначе прод будет собираться с другой ветки.
+2. **Переменные**: Settings → **Environment Variables**:
+   - `NEXT_PUBLIC_SUPABASE_URL` (Production)
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Production)
+   - `OPENAI_API_KEY` (Production)  
+   `SUPABASE_SERVICE_ROLE_KEY` на Vercel не нужен (только для локальных скриптов).
 
-В Vercel Dashboard → Project Settings → Environment Variables добавить:
+### 7.2. Обычный деплой (каждый раз так)
 
-| Переменная | Окружение |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Production |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Production |
-| `OPENAI_API_KEY` | Production |
+1. **Всё закоммитить на develop** (все изменённые файлы фичи, включая `package.json` при новых зависимостях):
+   ```bash
+   git checkout develop
+   git add -A
+   git status   # проверить, что в коммит входит всё нужное
+   git commit -m "описание изменений"
+   git push origin develop
+   ```
 
-`SUPABASE_SERVICE_ROLE_KEY` на Vercel **не нужен** (используется только в локальных скриптах импорта/админки).
+2. **Проверить билд локально** (чтобы на Vercel не упало):
+   ```bash
+   npm run build
+   ```
 
-### Последующие деплои
+3. **Смержить develop в main и запушить**:
+   ```bash
+   git checkout main
+   git pull origin main
+   git merge develop -m "Deploy: описание"
+   git push origin main
+   git checkout develop
+   ```
 
-```bash
-git add -A && git commit -m "описание" && git push
-vercel --yes --prod
-```
+4. **Проверить прод**: Vercel сам соберёт из `main`. Через 1–2 мин открыть https://innerfrench.bogachev.fr (или свой Production URL). Жёсткое обновление: Ctrl+F5.
 
-Или настроить авто-деплой через Vercel GitHub Integration (уже подключен).
+### 7.3. Если на проде не видно обновлений
+
+1. **Vercel Dashboard** → **Deployments**: открыть последний деплой с ветки **main**. Статус **Ready** или **Error**?
+2. Если **Error** — открыть билд, посмотреть лог (часто нет `recharts` или другая зависимость).
+3. **Settings** → **Git** → **Production Branch** должен быть именно `main`.
+4. **Redeploy**: Deployments → у последнего деплоя меню (три точки) → **Redeploy** (при необходимости с **Clear Build Cache**).
+5. В браузере: жёсткое обновление (Ctrl+F5) или режим инкогнито, чтобы отбросить кэш.
 
 ## 8. Настройка домена
 
@@ -170,11 +203,14 @@ SSL выпускается автоматически.
 ```
 src/
   app/
-    api/word-translate/— серверный перевод слова (OpenAI)
-    episodes/          — список эпизодов
-    episodes/[slug]/   — плеер с транскриптом
-    dashboard/         — статистика
-    vocab/             — заглушка (будущее)
+    api/word-translate/ — серверный перевод слова (OpenAI)
+    api/word-info/      — грамматика и пример для карточки слова
+    episodes/           — список эпизодов
+    episodes/[slug]/    — плеер с транскриптом
+    dashboard/          — статистика прослушиваний
+    vocab/              — карточки слов (SRS)
+    word-count/         — графики: словоформы, добавленные/пройденные слова
+    TopTabs.tsx         — навигация (Episodes, Progress, Words, Word Count)
   lib/
     supabase.ts        — клиент (anon key)
     supabase-admin.ts  — клиент (service role)
