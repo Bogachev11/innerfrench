@@ -315,19 +315,28 @@ export default function WordCountPage() {
     };
   }, [points, pointsAdded, pointsMastered, view]);
 
+  const addedCount = view2?.chartData2?.length
+    ? view2.chartData2[view2.chartData2.length - 1]?.added ?? 0
+    : 0;
+  const masteredCount = view2?.chartData2?.length
+    ? view2.chartData2[view2.chartData2.length - 1]?.mastered ?? 0
+    : 0;
+
   return (
     <div className="min-h-screen">
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-        <h1 className="text-3xl font-bold">Word Count</h1>
-        <p className="text-base opacity-70">Cumulative vocabulary from listened podcasts</p>
-
         {loading ? (
           <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">Loading...</div>
         ) : !view ? (
           <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">No data yet.</div>
         ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              <WordCountCard label="Total word forms" value={view.maxY} />
+              <WordCountCard label="Added" value={addedCount} />
+              <WordCountCard label="Mastered" value={masteredCount} />
+            </div>
           <div className="px-2 pb-1 space-y-2">
-            <div className="text-sm font-medium text-gray-700 px-2">Total word forms: {view.maxY}</div>
             <div className="w-full" style={{ height: 240 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={view.chartData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
@@ -433,8 +442,18 @@ export default function WordCountPage() {
               </>
             )}
           </div>
+          </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function WordCountCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-gray-50 rounded-xl px-2.5 py-3">
+      <div className="text-lg font-bold text-gray-900 tabular-nums">{value}</div>
+      <div className="text-[11px] text-muted mt-0.5 leading-tight">{label}</div>
     </div>
   );
 }
