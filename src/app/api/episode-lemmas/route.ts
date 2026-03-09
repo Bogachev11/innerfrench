@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+import { supabase } from "@/lib/supabase";
 
 function tokenize(text: string): string[] {
   const cleaned = text
@@ -13,12 +13,6 @@ function tokenize(text: string): string[] {
 type SegmentRow = { episode_id: string; fr_text: string; start_ms: number; end_ms: number | null };
 
 export async function POST(req: Request) {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return NextResponse.json(
-      { error: "SUPABASE_SERVICE_ROLE_KEY not set. Add it in Vercel → Settings → Environment Variables (Production)." },
-      { status: 503 }
-    );
-  }
   try {
     const body = await req.json();
     const episodeIds = Array.isArray(body?.episodeIds) ? (body.episodeIds as string[]) : [];
@@ -33,7 +27,7 @@ export async function POST(req: Request) {
       const ids = episodeIds.slice(i, i + chunkSize);
       let offset = 0;
       while (true) {
-        const { data, error } = await supabaseAdmin
+        const { data, error } = await supabase
           .from("segments")
           .select("episode_id, fr_text, start_ms, end_ms")
           .in("episode_id", ids)

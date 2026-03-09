@@ -475,7 +475,7 @@ export default function VocabPage() {
             {chartMounted && chartData.length > 0 && (
               <div className="mt-6">
                 <div className="text-sm text-gray-600 mb-2">
-                  &quot;Know&quot; repetitions for {chartYear}-{String(chartMonth).padStart(2, "0")} (cumulative)
+                  Cumulative &quot;Know&quot; count by day — {chartYear}-{String(chartMonth).padStart(2, "0")}
                 </div>
                 <div className="w-full" style={{ width: "100%", height: 224, minHeight: 224 }}>
                   <ResponsiveContainer width="100%" height={224}>
@@ -492,7 +492,7 @@ export default function VocabPage() {
                       <YAxis width={24} tick={{ fontSize: 10 }} allowDecimals={false} domain={[0, chartYMax]} />
                       <Tooltip
                         labelFormatter={(_, payload) => payload?.[0]?.payload?.dayLabel ?? ""}
-                        formatter={(value) => [value, "Know"]}
+                        formatter={(value) => [value, "Cumulative Know"]}
                       />
                       <Bar dataKey="total" name="Know" fill="#22c55e" isAnimationActive={false} />
                     </BarChart>
