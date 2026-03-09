@@ -3,6 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 type ProgressRow = {
   id: string;
@@ -16,6 +25,7 @@ type ProgressRow = {
   last_correct_day: string | null;
   next_review_at: string;
   mastered_at: string | null;
+  review_stage: number;
 };
 
 type UserWordRow = {
@@ -34,14 +44,25 @@ type WordInfo = {
 };
 
 const DAY_MS = 86400000;
-const INTERVAL_DAYS = [1, 2, 4, 7, 10, 14, 21, 30, 45, 60];
+const KNOWS_TO_ADVANCE = 5;
 const TZ = "Europe/Paris";
 
-function canonicalKey(word: string, lemma: string | null) {
-  return (lemma || word).trim().toLowerCase();
+function getCurrentMonthParis(): { year: number; month: number; daysInMonth: number } {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value || "0");
+  const year = get("year");
+  const month = get("month");
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { year, month, daysInMonth };
 }
 
-function todayKeyParis(now = new Date()) {
+function dayKeyParis(d: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     year: "numeric",
@@ -49,29 +70,43 @@ function todayKeyParis(now = new Date()) {
     day: "2-digit",
     hour: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(now);
-  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value || "0");
+  }).formatToParts(d);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value || "0");
   let y = get("year");
   let m = get("month");
-  let d = get("day");
+  let day = get("day");
   const h = get("hour");
   if (h < 2) {
-    const prev = new Date(Date.UTC(y, m - 1, d) - DAY_MS);
+    const prev = new Date(Date.UTC(y, m - 1, day) - DAY_MS);
     y = prev.getUTCFullYear();
     m = prev.getUTCMonth() + 1;
-    d = prev.getUTCDate();
+    day = prev.getUTCDate();
   }
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function canonicalKey(word: string, lemma: string | null) {
+  return (lemma || word).trim().toLowerCase();
 }
 
 function addDaysIso(days: number) {
   return new Date(Date.now() + days * DAY_MS).toISOString();
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 export default function VocabPage() {
   const [due, setDue] = useState<ProgressRow[]>([]);
   const [current, setCurrent] = useState<ProgressRow | null>(null);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"know" | "dontknow" | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, mastered: 0, due: 0 });
   const [samplesByCanonical, setSamplesByCanonical] = useState<
@@ -79,11 +114,68 @@ export default function VocabPage() {
   >({});
   const [infoByCanonical, setInfoByCanonical] = useState<Record<string, WordInfo>>({});
   const [infoLoading, setInfoLoading] = useState(false);
+  const [reviewEvents, setReviewEvents] = useState<Array<{ canonical_key: string; reviewed_at: string; correct: boolean }>>([]);
+  const [chartMounted, setChartMounted] = useState(false);
+  useEffect(() => {
+    setChartMounted(true);
+  }, []);
 
   const progressText = useMemo(
     () => (stats.total === 0 ? "0%" : `${Math.round((stats.mastered / stats.total) * 100)}%`),
     [stats]
   );
+
+  const { year: chartYear, month: chartMonth, daysInMonth: chartDaysInMonth } = useMemo(() => getCurrentMonthParis(), []);
+
+  const chartData = useMemo(() => {
+    const dueKeys = [...new Set(due.map((r) => r.canonical_key))];
+    if (dueKeys.length === 0) return [];
+    const yearMonth = `${chartYear}-${String(chartMonth).padStart(2, "0")}`;
+    const byWordByDayOfMonth = new Map<string, Map<number, number>>();
+    for (const key of dueKeys) byWordByDayOfMonth.set(key, new Map());
+    for (const e of reviewEvents) {
+      if (!e.correct) continue;
+      const day = dayKeyParis(new Date(e.reviewed_at));
+      if (day.slice(0, 7) !== yearMonth) continue;
+      const dayOfMonth = parseInt(day.slice(8, 10), 10);
+      const m = byWordByDayOfMonth.get(e.canonical_key);
+      if (m) m.set(dayOfMonth, (m.get(dayOfMonth) || 0) + 1);
+    }
+    const cumul: Record<string, number> = {};
+    for (const k of dueKeys) cumul[k] = 0;
+    const out: Array<{ dayIndex: number; dayLabel: string; [key: string]: number | string }> = [];
+    for (let d = 1; d <= chartDaysInMonth; d++) {
+      for (const k of dueKeys) cumul[k] += byWordByDayOfMonth.get(k)?.get(d) || 0;
+      out.push({
+        dayIndex: d,
+        dayLabel: `${String(d).padStart(2, "0")}.${String(chartMonth).padStart(2, "0")}`,
+        ...{ ...cumul },
+      });
+    }
+    return out;
+  }, [due, reviewEvents, chartYear, chartMonth, chartDaysInMonth]);
+
+  const chartColors = useMemo(() => {
+    const neutral = "#9ca3af";
+    const active = "#22c55e";
+    return due.slice(0, 20).map((r) => ({
+      key: r.canonical_key,
+      word: r.display_word,
+      color: current?.canonical_key === r.canonical_key ? active : neutral,
+    }));
+  }, [due, current?.canonical_key]);
+
+  const chartYMax = useMemo(() => {
+    let max = 0;
+    for (const row of chartData) {
+      for (const k of Object.keys(row)) {
+        if (k === "dayIndex" || k === "dayLabel") continue;
+        const v = Number((row as Record<string, unknown>)[k]);
+        if (!Number.isNaN(v) && v > max) max = v;
+      }
+    }
+    return Math.max(1, max);
+  }, [chartData]);
 
   useEffect(() => {
     bootstrap().finally(() => setLoading(false));
@@ -139,25 +231,57 @@ export default function VocabPage() {
 
   async function loadDeck(deviceId: string) {
     const nowIso = new Date().toISOString();
-    const [{ data: dueRaw }, { data: allRaw }] = await Promise.all([
-      supabase
-        .from("user_word_progress")
-        .select("*")
-        .eq("device_id", deviceId)
-        .is("mastered_at", null)
-        .lte("next_review_at", nowIso)
-        .order("next_review_at", { ascending: true }),
-      supabase.from("user_word_progress").select("id, mastered_at").eq("device_id", deviceId),
-    ]);
+    const { data: allRaw } = await supabase
+      .from("user_word_progress")
+      .select("*")
+      .eq("device_id", deviceId);
 
-    const dueRows = (dueRaw || []) as ProgressRow[];
+    const all = (allRaw || []) as ProgressRow[];
+    const dueRows = shuffle(
+      all
+        .filter((r) => !r.mastered_at && (r.correct_count < KNOWS_TO_ADVANCE || r.next_review_at <= nowIso))
+        .sort((a, b) => {
+          const aLearning = a.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
+          const bLearning = b.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
+          if (aLearning !== bLearning) return aLearning - bLearning;
+          return new Date(a.next_review_at).getTime() - new Date(b.next_review_at).getTime();
+        })
+    );
+
+    const keys = [...new Set(dueRows.map((r) => r.canonical_key))];
+    if (keys.length > 0) {
+      const { data: infoRows } = await supabase
+        .from("word_info")
+        .select("canonical_key, grammar, example_fr, example_ru")
+        .in("canonical_key", keys);
+      const fromDb: Record<string, WordInfo> = {};
+      for (const row of infoRows || []) {
+        const k = String((row as { canonical_key: string }).canonical_key);
+        fromDb[k] = {
+          grammar: String((row as { grammar: string | null }).grammar ?? ""),
+          example_fr: String((row as { example_fr: string | null }).example_fr ?? ""),
+          example_ru: String((row as { example_ru: string | null }).example_ru ?? ""),
+        };
+      }
+      setInfoByCanonical((prev) => ({ ...prev, ...fromDb }));
+    }
+
     setDue(dueRows);
     setCurrent(dueRows[0] || null);
     setShowAnswer(false);
+    setPendingAction(null);
 
-    const total = (allRaw || []).length;
-    const mastered = (allRaw || []).filter((r) => !!r.mastered_at).length;
+    const total = all.length;
+    const mastered = all.filter((r) => !!r.mastered_at).length;
     setStats({ total, mastered, due: dueRows.length });
+
+    // Load all review events for the device; chart filters by current Paris month in useMemo
+    const { data: eventsRaw } = await supabase
+      .from("review_events")
+      .select("canonical_key, reviewed_at, correct")
+      .eq("device_id", deviceId)
+      .order("reviewed_at", { ascending: true });
+    setReviewEvents((eventsRaw || []) as Array<{ canonical_key: string; reviewed_at: string; correct: boolean }>);
   }
 
   useEffect(() => {
@@ -166,6 +290,14 @@ export default function VocabPage() {
     if (infoByCanonical[key]) return;
     void fetchWordInfo(current);
   }, [showAnswer, current, infoByCanonical]);
+
+  useEffect(() => {
+    if (pendingAction !== "know" || !current) return;
+    const t = setTimeout(() => {
+      answerCard(true);
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [pendingAction, current]);
 
   async function fetchWordInfo(row: ProgressRow) {
     setInfoLoading(true);
@@ -183,14 +315,21 @@ export default function VocabPage() {
       });
       if (!res.ok) return;
       const data = (await res.json()) as WordInfo;
-      setInfoByCanonical((prev) => ({
-        ...prev,
-        [row.canonical_key]: {
-          grammar: data.grammar || "",
-          example_fr: data.example_fr || sample?.context_fr || "",
-          example_ru: data.example_ru || sample?.context_ru || "",
+      const info: WordInfo = {
+        grammar: data.grammar || "",
+        example_fr: data.example_fr || sample?.context_fr || "",
+        example_ru: data.example_ru || sample?.context_ru || "",
+      };
+      setInfoByCanonical((prev) => ({ ...prev, [row.canonical_key]: info }));
+      await supabase.from("word_info").upsert(
+        {
+          canonical_key: row.canonical_key,
+          grammar: info.grammar,
+          example_fr: info.example_fr,
+          example_ru: info.example_ru,
         },
-      }));
+        { onConflict: "canonical_key" }
+      );
     } finally {
       setInfoLoading(false);
     }
@@ -199,57 +338,46 @@ export default function VocabPage() {
   async function answerCard(correct: boolean) {
     if (!current) return;
     const deviceId = getDeviceId();
-    const now = new Date();
-    const nowIso = now.toISOString();
-    const todayKey = todayKeyParis(now);
-
-    let correctCount = current.correct_count;
-    let correctDays = current.correct_days;
-    let lastCorrectDay = current.last_correct_day;
+    const nowIso = new Date().toISOString();
+    const stage = current.review_stage ?? 0;
+    let correctCount = correct ? current.correct_count + 1 : 0;
+    let nextReviewAt = nowIso;
     let masteredAt: string | null = null;
-    let nextReviewAt = addDaysIso(1);
+    let newStage = stage;
 
-    if (correct) {
-      if (lastCorrectDay !== todayKey) {
-        correctDays += 1;
-        lastCorrectDay = todayKey;
-      }
-      correctCount += 1;
-
-      if (correctCount >= 10) {
-        if (correctDays <= 1) {
-          // Crammed in one day -> one delayed check in a month.
-          correctCount = 9;
-          nextReviewAt = addDaysIso(30);
-        } else if (correctDays <= 3) {
-          // Still too compressed -> one delayed check in a week.
-          correctCount = 9;
-          nextReviewAt = addDaysIso(7);
-        } else {
-          masteredAt = nowIso;
-          nextReviewAt = nowIso;
-        }
+    if (correct && correctCount >= KNOWS_TO_ADVANCE) {
+      if (stage === 0) {
+        nextReviewAt = addDaysIso(7);
+        correctCount = 0;
+        newStage = 1;
+      } else if (stage === 1) {
+        nextReviewAt = addDaysIso(30);
+        correctCount = 0;
+        newStage = 2;
       } else {
-        const interval = INTERVAL_DAYS[Math.min(correctCount - 1, INTERVAL_DAYS.length - 1)];
-        nextReviewAt = addDaysIso(interval);
+        masteredAt = nowIso;
+        nextReviewAt = nowIso;
       }
-    } else {
-      correctCount = 0;
-      nextReviewAt = addDaysIso(1);
     }
 
     await supabase
       .from("user_word_progress")
       .update({
         correct_count: correctCount,
-        correct_days: correctDays,
-        last_correct_day: correct ? lastCorrectDay : current.last_correct_day,
         last_reviewed_at: nowIso,
         next_review_at: nextReviewAt,
         mastered_at: masteredAt,
+        review_stage: newStage,
         updated_at: nowIso,
       })
       .eq("id", current.id);
+
+    await supabase.from("review_events").insert({
+      device_id: deviceId,
+      canonical_key: current.canonical_key,
+      reviewed_at: nowIso,
+      correct,
+    });
 
     await loadDeck(deviceId);
   }
@@ -275,6 +403,9 @@ export default function VocabPage() {
             <div className="bg-gray-50 rounded-xl p-6">
               <div className="text-sm text-gray-500 mb-2">Front</div>
               <div className="text-4xl font-bold">{current.display_word}</div>
+              {current.lemma && current.lemma.trim().toLowerCase() !== current.display_word.trim().toLowerCase() && (
+                <div className="text-lg text-gray-500 mt-2">Base form: {current.lemma.trim()}</div>
+              )}
             </div>
 
             {showAnswer && (
@@ -307,29 +438,77 @@ export default function VocabPage() {
 
             <div className="flex gap-3 flex-wrap">
               {!showAnswer ? (
-                <button
-                  onClick={() => setShowAnswer(true)}
-                  className="rounded-xl px-6 py-4 bg-gray-900 text-white text-lg font-medium min-h-[52px]"
-                >
-                  Show answer
-                </button>
-              ) : (
                 <>
                   <button
-                    onClick={() => answerCard(false)}
+                    onClick={() => {
+                      setShowAnswer(true);
+                      setPendingAction("dontknow");
+                    }}
                     className="rounded-xl px-6 py-4 bg-gray-200 text-gray-800 text-lg font-medium min-h-[52px] flex-1 min-w-[140px]"
                   >
-                    I did not know
+                    Don&apos;t know
                   </button>
                   <button
-                    onClick={() => answerCard(true)}
+                    onClick={() => {
+                      setShowAnswer(true);
+                      setPendingAction("know");
+                    }}
                     className="rounded-xl px-6 py-4 bg-gray-900 text-white text-lg font-medium min-h-[52px] flex-1 min-w-[140px]"
                   >
-                    I knew it
+                    Know
                   </button>
                 </>
+              ) : pendingAction === "dontknow" ? (
+                <button
+                  onClick={() => answerCard(false)}
+                  className="rounded-xl px-6 py-4 bg-gray-900 text-white text-lg font-medium min-h-[52px] min-w-[160px]"
+                >
+                  Next
+                </button>
+              ) : (
+                <span className="text-gray-500 text-sm py-2">Next word in 2 sec...</span>
               )}
             </div>
+
+            {chartMounted && chartData.length > 0 && chartColors.length > 0 && (
+              <div className="mt-6">
+                <div className="text-sm text-gray-600 mb-2">
+                  &quot;Know&quot; repetitions for {chartYear}-{String(chartMonth).padStart(2, "0")} (cumulative)
+                </div>
+                <div className="w-full" style={{ width: "100%", height: 224, minHeight: 224 }}>
+                  <ResponsiveContainer width="100%" height={224}>
+                    <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 24 }}>
+                      <CartesianGrid stroke="#e5e7eb" vertical={false} />
+                      <XAxis
+                        dataKey="dayIndex"
+                        type="number"
+                        domain={[1, chartDaysInMonth]}
+                        tick={{ fontSize: 10 }}
+                        ticks={[1, Math.ceil(chartDaysInMonth / 4), Math.ceil(chartDaysInMonth / 2), Math.ceil((3 * chartDaysInMonth) / 4), chartDaysInMonth]}
+                        tickFormatter={(v) => chartData[Number(v) - 1]?.dayLabel ?? ""}
+                      />
+                      <YAxis width={24} tick={{ fontSize: 10 }} allowDecimals={false} domain={[0, chartYMax]} />
+                      <Tooltip
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.dayLabel ?? ""}
+                        formatter={(value, name) => [value, chartColors.find((c) => c.key === name)?.word ?? String(name)]}
+                      />
+                      {chartColors.map(({ key, word, color }) => (
+                        <Line
+                          key={key}
+                          type="stepAfter"
+                          dataKey={key}
+                          name={word}
+                          stroke={color}
+                          dot={{ r: 2, strokeWidth: 0 }}
+                          strokeWidth={2}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

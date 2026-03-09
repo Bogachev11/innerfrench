@@ -31,7 +31,17 @@ OPENAI_API_KEY=<openai key для перевода слов>
 
 Ключи берутся из Supabase Dashboard → Settings → API.
 
-## 3. Миграция БД (однократно)
+## 3. Бэкап и миграция БД
+
+**Перед применением миграций — сделать бэкап:**
+
+```bash
+npx tsx scripts/backup-db.ts
+```
+
+Дамп сохраняется в `supabase/backups/dump_YYYY-MM-DDTHH-MM-SS.sql` (данные всех таблиц public в виде INSERT). Папка `supabase/backups/` в .gitignore. Скрипт не требует Docker.
+
+**Затем применить миграции:**
 
 ```bash
 npx tsx scripts/runMigration.ts
@@ -42,6 +52,9 @@ npx tsx scripts/runMigration.ts
 - `002_rls.sql` — RLS-политики для MVP
 - `003_vocab.sql` — таблицы словаря (`words`, `user_words`)
 - `004_srs.sql` — прогресс повторений (`user_word_progress`)
+- `005_review_stage.sql` — этапы повторений
+- `006_word_info.sql` — грамматика и примеры слов
+- `007_review_events.sql` — события повторений (для графика «Know»)
 
 ## 4. Импорт эпизодов
 

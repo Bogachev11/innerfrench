@@ -4,10 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId, setDeviceId } from "@/lib/device";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
   ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -18,6 +21,7 @@ const START_KEY = "2026-03-01";
 type Point = { day: string; value: number };
 type ChartPoint = { dayIndex: number; value: number };
 type ChartPointVocab = { dayIndex: number; added: number; mastered: number };
+type BarPoint = { day: string; dayIndex: number; new: number; repeated: number; episodeIds: string[] };
 
 function dayKey(input: string | Date): string {
   const d = new Date(input);
@@ -126,17 +130,55 @@ async function fetchSegmentsForEpisodes(episodeIds: string[]): Promise<Array<{ e
   return out;
 }
 
+function tokenize(text: string): string[] {
+  const cleaned = text
+    .toLowerCase()
+    .replace(/[\u2019']/g, " ")
+    .replace(/[-–—]/g, " ");
+  const tokens = cleaned.match(/\p{L}+/gu) || [];
+  return tokens.filter(Boolean);
+}
+
+async function fetchLemmasByEpisode(episodeIds: string[]): Promise<Record<string, string[]>> {
+  const res = await fetch("/api/episode-lemmas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ episodeIds }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return json.lemmasByEpisode || {};
+}
+
+async function fetchLemmasByDay(
+  episodeIds: string[],
+  dayPositions: Array<{ day: string; positions: Record<string, number> }>
+): Promise<Record<string, string[]>> {
+  const res = await fetch("/api/episode-lemmas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ episodeIds, dayPositions }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return json.lemmasByDay || {};
+}
+
 function canonicalKey(word: string, lemma: string | null): string {
   return ((lemma || word) || "").trim().toLowerCase();
 }
 
 export default function WordCountPage() {
   const [points, setPoints] = useState<Point[]>([]);
+  const [barData, setBarData] = useState<BarPoint[]>([]);
+  const [episodeTitles, setEpisodeTitles] = useState<Record<string, string>>({});
   const [pointsAdded, setPointsAdded] = useState<Point[]>([]);
   const [pointsMastered, setPointsMastered] = useState<Point[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoadError(null);
     load().finally(() => setLoading(false));
   }, []);
 
@@ -144,7 +186,7 @@ export default function WordCountPage() {
     const deviceId = getDeviceId();
     const { data: sessionsRaw } = await supabase
       .from("listening_sessions")
-      .select("episode_id, started_at")
+      .select("episode_id, started_at, end_position_ms")
       .eq("device_id", deviceId);
     let sessions = sessionsRaw || [];
     let effectiveDeviceId = deviceId;
@@ -166,57 +208,140 @@ export default function WordCountPage() {
         effectiveDeviceId = adopted;
         const retry = await supabase
           .from("listening_sessions")
-          .select("episode_id, started_at")
+          .select("episode_id, started_at, end_position_ms")
           .eq("device_id", adopted);
         sessions = retry.data || [];
       }
     }
 
     const firstDayByEpisode = new Map<string, string>();
+    const sessionsByDay = new Map<string, Set<string>>();
     for (const s of sessions) {
       const ep = String(s.episode_id);
       const day = dayKey(s.started_at as string);
       const prev = firstDayByEpisode.get(ep);
       if (!prev || day < prev) firstDayByEpisode.set(ep, day);
+      if (!sessionsByDay.has(day)) sessionsByDay.set(day, new Set());
+      sessionsByDay.get(day)!.add(ep);
     }
 
-    const episodeIds = [...firstDayByEpisode.keys()];
+    const episodeIds = [...new Set([...firstDayByEpisode.keys(), ...[...sessionsByDay.values()].flatMap((set) => [...set])])];
     if (episodeIds.length === 0) {
       setPoints([]);
+      setBarData([]);
       return;
     }
 
-    const segments = await fetchSegmentsForEpisodes(episodeIds);
-    const formsByEpisode = new Map<string, Set<string>>();
-    for (const s of segments) {
-      const ep = String(s.episode_id);
-      if (!formsByEpisode.has(ep)) formsByEpisode.set(ep, new Set());
-      const bucket = formsByEpisode.get(ep)!;
-      for (const token of normalizeWordForms(String(s.fr_text || ""))) bucket.add(token);
+    const { data: episodesData } = await supabase.from("episodes").select("id, title").in("id", episodeIds);
+    const titles: Record<string, string> = {};
+    for (const e of episodesData || []) {
+      titles[String((e as { id: string }).id)] = String((e as { title: string }).title ?? "");
+    }
+    setEpisodeTitles(titles);
+
+    const episodesByDay = new Map<string, string[]>();
+    for (const [day, eps] of sessionsByDay.entries()) {
+      episodesByDay.set(day, [...eps]);
     }
 
-    const newFormsByDay = new Map<string, Set<string>>();
-    for (const [ep, day] of firstDayByEpisode.entries()) {
-      const forms = formsByEpisode.get(ep);
-      if (!forms || forms.size === 0) continue;
-      if (!newFormsByDay.has(day)) newFormsByDay.set(day, new Set());
-      const dst = newFormsByDay.get(day)!;
-      for (const f of forms) dst.add(f);
-    }
-
-    const lastSessionDay = [...firstDayByEpisode.values()].sort().slice(-1)[0] || START_KEY;
+    const allSessionDays = [...sessionsByDay.keys()].sort();
+    const lastSessionDay = allSessionDays.length ? allSessionDays[allSessionDays.length - 1] : [...firstDayByEpisode.values()].sort().slice(-1)[0] || START_KEY;
     const today = dayKey(new Date());
     const minHorizon = addMonthsToKey(START_KEY, 3);
     const lastDay = [lastSessionDay, today, minHorizon].sort().slice(-1)[0];
-    const out: Point[] = [];
-    const cumulative = new Set<string>();
 
+    const dayPositions: Array<{ day: string; positions: Record<string, number> }> = [];
     for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
-      out.push({ day: cursor, value: cumulative.size });
-      const plus = newFormsByDay.get(cursor);
-      if (plus) for (const f of plus) cumulative.add(f);
+      const positions: Record<string, number> = {};
+      for (const s of sessions) {
+        const ep = String(s.episode_id);
+        const sessionDay = dayKey(s.started_at as string);
+        if (sessionDay > cursor) continue;
+        const pos = Number((s as { end_position_ms?: number }).end_position_ms) || 0;
+        positions[ep] = Math.max(positions[ep] ?? 0, pos);
+      }
+      dayPositions.push({ day: cursor, positions });
     }
+
+    const out: Point[] = [];
+    const barOut: BarPoint[] = [];
+    let dayIndex = 0;
+
+    try {
+      const lemmasByDay = await fetchLemmasByDay(episodeIds, dayPositions);
+      const cumulative = new Set<string>();
+      for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
+        dayIndex += 1;
+        const currArr = lemmasByDay[cursor] || [];
+        const currSet = new Set(currArr);
+        let newCount = 0;
+        let repeatedCount = 0;
+        for (const l of currSet) {
+          if (cumulative.has(l)) repeatedCount += 1;
+          else newCount += 1;
+          cumulative.add(l);
+        }
+        out.push({ day: cursor, value: cumulative.size });
+        barOut.push({
+          day: cursor,
+          dayIndex,
+          new: newCount,
+          repeated: repeatedCount,
+          episodeIds: episodesByDay.get(cursor) || [],
+        });
+      }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      out.length = 0;
+      barOut.length = 0;
+      let lemmasByEpisode = new Map<string, Set<string>>();
+      try {
+        const raw = await fetchLemmasByEpisode(episodeIds);
+        for (const [ep, arr] of Object.entries(raw)) lemmasByEpisode.set(ep, new Set(arr as string[]));
+      } catch {
+        const segments = await fetchSegmentsForEpisodes(episodeIds);
+        for (const s of segments) {
+          const ep = String(s.episode_id);
+          if (!lemmasByEpisode.has(ep)) lemmasByEpisode.set(ep, new Set());
+          for (const t of tokenize(String(s.fr_text || ""))) lemmasByEpisode.get(ep)!.add(t);
+        }
+      }
+      const newLemmasByDay = new Map<string, Set<string>>();
+      for (const [day, epSet] of sessionsByDay.entries()) {
+        if (!newLemmasByDay.has(day)) newLemmasByDay.set(day, new Set());
+        const dst = newLemmasByDay.get(day)!;
+        for (const ep of epSet) {
+          const lemmas = lemmasByEpisode.get(ep);
+          if (lemmas) for (const l of lemmas) dst.add(l);
+        }
+      }
+      const cumulative = new Set<string>();
+      dayIndex = 0;
+      for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
+        dayIndex += 1;
+        let newCount = 0;
+        let repeatedCount = 0;
+        const plus = newLemmasByDay.get(cursor);
+        if (plus) {
+          for (const l of plus) {
+            if (cumulative.has(l)) repeatedCount += 1;
+            else newCount += 1;
+            cumulative.add(l);
+          }
+        }
+        out.push({ day: cursor, value: cumulative.size });
+        barOut.push({
+          day: cursor,
+          dayIndex,
+          new: newCount,
+          repeated: repeatedCount,
+          episodeIds: episodesByDay.get(cursor) || [],
+        });
+      }
+    }
+
     setPoints(out);
+    setBarData(barOut);
 
     // Added words (user_words) and mastered (user_word_progress) for second chart
     const { data: userWordsRaw } = await supabase
@@ -291,6 +416,27 @@ export default function WordCountPage() {
     };
   }, [points]);
 
+  const barView = useMemo(() => {
+    if (points.length === 0 || barData.length !== points.length || !view) return null;
+    const todayIndex = view.todayIndex;
+    const EMPTY_DAY_BAR = 8;
+    const chartBarData = barData.slice(0, todayIndex).map((d) => ({
+      ...d,
+      minBar: d.new + d.repeated === 0 ? EMPTY_DAY_BAR : 1,
+    }));
+    const maxBar = Math.max(EMPTY_DAY_BAR + 1, ...chartBarData.map((d) => d.minBar + d.new + d.repeated));
+    const yTicksBar = buildYTicks(maxBar);
+    const yMaxBar = yTicksBar[yTicksBar.length - 1] ?? maxBar;
+    return {
+      chartBarData,
+      yTicksBar,
+      yMaxBar,
+      totalDays: view.totalDays,
+      monthTicks: view.monthTicks,
+      monthLabelByTick: view.monthLabelByTick,
+    };
+  }, [points, barData, view]);
+
   const view2 = useMemo(() => {
     if (points.length === 0 || pointsAdded.length !== points.length || pointsMastered.length !== points.length || !view) return null;
     const totalDays = points.length;
@@ -328,57 +474,56 @@ export default function WordCountPage() {
         {loading ? (
           <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">Loading...</div>
         ) : !view ? (
-          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">No data yet.</div>
+          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500 space-y-1">
+            {loadError && <div className="text-amber-700">{loadError}</div>}
+            <div>No data yet. Listen to episodes to see progress.</div>
+          </div>
         ) : (
           <div className="space-y-4">
+            {loadError && (
+              <div className="bg-amber-50 text-amber-800 text-sm rounded-lg px-3 py-2">
+                Lemmas API failed, showing word forms. {loadError}
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-2">
-              <WordCountCard label="Total word forms" value={view.maxY} />
+              <WordCountCard label={loadError ? "Word forms" : "Lemmas"} value={view.maxY} />
               <WordCountCard label="Added" value={addedCount} />
               <WordCountCard label="Mastered" value={masteredCount} />
             </div>
           <div className="px-2 pb-1 space-y-2">
-            <div className="w-full" style={{ height: 240 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={view.chartData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
-                  <defs>
-                    <linearGradient id="totalWordsGrad" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor="#bbf7d0" />
-                      <stop offset="45%" stopColor="#86efac" />
-                      <stop offset="100%" stopColor="#34d399" />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="#e5e7eb" vertical={false} />
-                  <XAxis
-                    type="number"
-                    dataKey="dayIndex"
-                    domain={[1, view.totalDays]}
-                    ticks={view.monthTicks}
-                    tickFormatter={(v) => view.monthLabelByTick.get(Number(v)) || ""}
-                    tick={{ fill: "#374151", fontSize: 12 }}
-                    axisLine={{ stroke: "#111827" }}
-                    tickLine={{ stroke: "#111827" }}
-                  />
-                  <YAxis
-                    width={28}
-                    axisLine={false}
-                    fontSize={12}
-                    tickFormatter={fmtY}
-                    ticks={view.yTicks}
-                    domain={[0, view.yMax]}
-                    tick={{ fill: "#374151" }}
-                    tickLine={false}
-                  />
-                  <Line
-                    type="stepAfter"
-                    dataKey="value"
-                    stroke="url(#totalWordsGrad)"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {barView && (
+              <div className="w-full" style={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={barView.chartBarData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
+                    <Tooltip content={<BarTooltip episodeTitles={episodeTitles} />} cursor={{ fill: "#f3f4f6" }} />
+                    <CartesianGrid stroke="#e5e7eb" vertical={false} />
+                    <XAxis
+                      type="number"
+                      dataKey="dayIndex"
+                      domain={[1, barView.totalDays]}
+                      ticks={barView.monthTicks}
+                      tickFormatter={(v) => barView.monthLabelByTick.get(Number(v)) || ""}
+                      tick={{ fill: "#374151", fontSize: 12 }}
+                      axisLine={{ stroke: "#111827" }}
+                      tickLine={{ stroke: "#111827" }}
+                    />
+                    <YAxis
+                      width={28}
+                      axisLine={false}
+                      fontSize={12}
+                      tickFormatter={fmtY}
+                      ticks={barView.yTicksBar}
+                      domain={[0, barView.yMaxBar]}
+                      tick={{ fill: "#374151" }}
+                      tickLine={false}
+                    />
+                    <Bar dataKey="minBar" stackId="a" fill="#e5e7eb" isAnimationActive={false} />
+                    <Bar dataKey="repeated" stackId="a" fill="#d1d5db" isAnimationActive={false} />
+                    <Bar dataKey="new" stackId="a" fill="#22c55e" isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
             {view2 && (
               <>
                 <div className="text-sm font-medium text-gray-700 px-2">Added words / Mastered</div>
@@ -445,6 +590,37 @@ export default function WordCountPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function BarTooltip({
+  active,
+  payload,
+  episodeTitles,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: BarPoint }>;
+  episodeTitles: Record<string, string>;
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  const ids = p.episodeIds || [];
+  const titles = ids.map((id) => episodeTitles[id] || id).filter(Boolean);
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm max-w-[280px]">
+      <div className="text-gray-500 mb-1">{p.day}</div>
+      {titles.length > 0 ? (
+        <ul className="list-disc list-inside space-y-0.5">
+          {titles.map((t, i) => (
+            <li key={i} className="text-gray-900 truncate" title={t}>
+              {t}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-gray-400">Нет эпизодов</div>
+      )}
     </div>
   );
 }

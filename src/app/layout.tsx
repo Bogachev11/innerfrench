@@ -14,7 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
-      <body className="bg-white text-gray-900 font-sans antialiased">
+      <body className="bg-white text-gray-900 font-sans antialiased" suppressHydrationWarning>
         <TopTabs />
         {children}
       </body>
