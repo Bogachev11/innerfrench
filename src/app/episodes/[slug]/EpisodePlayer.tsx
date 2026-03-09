@@ -221,6 +221,33 @@ export function EpisodePlayer({
       return next;
     });
     setWordSaveMsg("Word saved");
+    const word = wordPanel.word.toLowerCase();
+    const lemma = (wordTranslation.lemma || word).trim();
+    fetch("/api/word-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        word,
+        lemma: wordTranslation.lemma || undefined,
+        translationRu: wordTranslation.translation,
+        contextFr: wordPanel.contextFr || "",
+      }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        const canonical_key = (lemma || word).trim().toLowerCase();
+        return supabase.from("word_info").upsert(
+          {
+            canonical_key,
+            grammar: data.grammar ?? "",
+            example_fr: data.example_fr ?? "",
+            example_ru: data.example_ru ?? "",
+          },
+          { onConflict: "canonical_key" }
+        );
+      })
+      .catch(() => {});
   }
 
   function renderWordTokens(text: string, seg: Segment) {

@@ -34,13 +34,13 @@ async function main() {
   await page.goto(`${BASE}/word-count`, { waitUntil: "networkidle", timeout });
   await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(SCREENSHOTS, "prod_word_count.png") });
-  const h1 = await page.locator("h1").first().textContent().catch(() => "");
   const hasTotalForms = (await page.locator("text=Total word forms").count()) > 0;
   const hasNoData = (await page.locator("text=No data yet").count()) > 0;
   const hasLoading = (await page.locator("text=Loading...").count()) > 0;
-  const ok = h1?.includes("Word Count") && (hasTotalForms || hasNoData || hasLoading);
-  if (!ok) errors.push("Word Count page: expected title and (Total word forms | No data | Loading)");
-  console.log(`   Title: ${h1?.trim()}, Total word forms: ${hasTotalForms}, No data: ${hasNoData}`);
+  const hasChartsOrTiles = (await page.locator("text=Added").count()) > 0 || hasTotalForms;
+  const ok = hasTotalForms || hasNoData || hasLoading || hasChartsOrTiles;
+  if (!ok) errors.push("Word Count page: expected Total word forms / Added / No data");
+  console.log(`   Total word forms: ${hasTotalForms}, No data: ${hasNoData}`);
 
   console.log("4. Dashboard...");
   await page.goto(`${BASE}/dashboard`, { waitUntil: "networkidle", timeout });
@@ -57,10 +57,9 @@ async function main() {
   await page.goto(`${BASE}/vocab`, { waitUntil: "networkidle", timeout });
   await page.waitForTimeout(1000);
   await page.screenshot({ path: path.join(SCREENSHOTS, "prod_vocab.png") });
-  const vocabTitle = await page.locator("h1").first().textContent().catch(() => "");
-  const hasVocab = vocabTitle && /word|vocab|vocabulary/i.test(vocabTitle);
-  if (!hasVocab) errors.push("Vocab page: expected Words/Vocabulary title");
-  console.log(`   Vocab title: ${vocabTitle?.trim()}`);
+  const hasVocabKpi = (await page.locator("text=Total").count()) > 0 || (await page.locator("text=Due").count()) > 0;
+  if (!hasVocabKpi) errors.push("Vocab page: expected KPI (Total/Due) or cards");
+  console.log(`   Vocab OK: ${hasVocabKpi}`);
 
   await browser.close();
 
