@@ -158,9 +158,11 @@ npm run dev
    - `NEXT_PUBLIC_SUPABASE_URL` (Production)
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Production)
    - `OPENAI_API_KEY` (Production)  
-   `SUPABASE_SERVICE_ROLE_KEY` на Vercel не нужен (только для локальных скриптов).
+   `SUPABASE_SERVICE_ROLE_KEY` на Vercel **нужен** для API (word-info, episode-lemmas, prefill).
 
-### 7.2. Обычный деплой (каждый раз так)
+### 7.2. Обычный деплой (каждый раз строго по шагам)
+
+**Не полагаться на автодеплой по push в main.** Всегда деплоить вручную и проверять.
 
 1. **Всё закоммитить на develop** (все изменённые файлы фичи, включая `package.json` при новых зависимостях):
    ```bash
@@ -171,10 +173,11 @@ npm run dev
    git push origin develop
    ```
 
-2. **Проверить билд локально** (чтобы на Vercel не упало):
+2. **Проверить билд локально** (обязательно, иначе деплой упадёт):
    ```bash
    npm run build
    ```
+   Если падает — исправить (env, типы, линт). На Vercel те же ошибки.
 
 3. **Смержить develop в main и запушить**:
    ```bash
@@ -182,24 +185,37 @@ npm run dev
    git pull origin main
    git merge develop -m "Deploy: описание"
    git push origin main
+   ```
+
+4. **Обязательно задеплоить в прод вручную** (из корня проекта, на ветке `main`):
+   ```bash
+   npx vercel --yes --prod
+   ```
+   Дождаться окончания (Production: https://...). Если **Error** — смотреть лог:
+   ```bash
+   npx vercel inspect <deployment-url> --logs
+   ```
+
+5. **Обязательно проверить прод скриптом** (должен пройти без ошибок):
+   ```bash
+   npx tsx scripts/testProd.ts
+   ```
+   Скрипт проверяет, что на https://innerfrench.bogachev.fr есть новый UI (Base form / Know на Words). Если тест падает с «expected English UI» — прод отдаёт старую версию (кэш или другой деплой).
+
+6. **Вернуться на develop**:
+   ```bash
    git checkout develop
    ```
 
-4. **Проверить прод**: Vercel сам соберёт из `main`. Через 1–2 мин открыть https://innerfrench.bogachev.fr. Жёсткое обновление: Ctrl+F5.
+**Переменные на Vercel (Production):** в Settings → Environment Variables должны быть заданы `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `OPENAI_API_KEY`, а также `SUPABASE_SERVICE_ROLE_KEY` (для API word-info, episode-lemmas). Иначе билд пройдёт, но API будут падать в рантайме.
 
-5. **Если прод не обновился** (автодеплой с GitHub не сработал) — задеплоить вручную с main:
-   ```bash
-   git checkout main && git pull origin main && npx vercel --yes --prod && git checkout develop
-   ```
-   Проверка прода: `npx tsx scripts/testProd.ts` (при необходимости `PROD_URL=https://... npx tsx scripts/testProd.ts`).
+**Node.js:** в проекте задано `"engines": { "node": "22.x" }` в `package.json` — не менять без необходимости.
 
 ### 7.3. Если на проде не видно обновлений
 
-1. **Vercel Dashboard** → **Deployments**: открыть последний деплой с ветки **main**. Статус **Ready** или **Error**?
-2. Если **Error** — открыть билд, посмотреть лог (часто нет `recharts` или другая зависимость).
-3. **Settings** → **Git** → **Production Branch** должен быть именно `main`.
-4. **Redeploy**: Deployments → у последнего деплоя меню (три точки) → **Redeploy** (при необходимости с **Clear Build Cache**).
-5. В браузере: жёсткое обновление (Ctrl+F5) или режим инкогнито, чтобы отбросить кэш.
+1. Убедиться, что после merge в main был выполнен **ручной деплой** (`npx vercel --yes --prod`) и он завершился без Error.
+2. **Vercel Dashboard** → **Deployments**: последний деплой должен быть **Ready**. Если **Error** — открыть билд, в логе искать причину (например `supabaseKey is required`, линт, типы).
+3. Запустить `npx tsx scripts/testProd.ts` — если падает «expected English UI», сделать жёсткое обновление (Ctrl+F5) или проверить в инкогнито; при необходимости повторить деплой с **Clear Build Cache** в Vercel.
 
 ## 8. Настройка домена
 

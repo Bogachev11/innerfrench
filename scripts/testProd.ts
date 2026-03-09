@@ -55,11 +55,13 @@ async function main() {
 
   console.log("5. Words (vocab) page...");
   await page.goto(`${BASE}/vocab`, { waitUntil: "networkidle", timeout });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(SCREENSHOTS, "prod_vocab.png") });
   const hasVocabKpi = (await page.locator("text=Total").count()) > 0 || (await page.locator("text=Due").count()) > 0;
+  const hasNewUi = (await page.locator("text=Base form").count()) > 0 || (await page.locator("text=Know").count()) > 0;
   if (!hasVocabKpi) errors.push("Vocab page: expected KPI (Total/Due) or cards");
-  console.log(`   Vocab OK: ${hasVocabKpi}`);
+  if (!hasNewUi) errors.push("Vocab page: expected English UI (Base form / Know) — deploy may be stale");
+  console.log(`   Vocab OK: ${hasVocabKpi}, New UI: ${hasNewUi}`);
 
   await browser.close();
 

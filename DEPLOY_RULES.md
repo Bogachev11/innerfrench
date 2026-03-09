@@ -35,12 +35,15 @@
    ```
    Так в main попадает **весь** текущий develop.
 
-4. **Деплой на прод** (если автодеплой с GitHub не сработал):
+4. **Деплой на прод (обязательно вручную каждый раз)**:
    ```bash
-   git checkout main && git pull origin main && npx vercel --yes --prod && git checkout develop
+   git checkout main
+   git pull origin main
+   npx vercel --yes --prod
    ```
+   Не полагаться на автодеплой по push в main — всегда вызывать `vercel --prod` после push.
 
-5. **Проверка**: `npx tsx scripts/testProd.ts` — должен завершиться без ошибок (вкладки, Word Count, Words, Dashboard).
+5. **Проверка**: `npx tsx scripts/testProd.ts` — должен завершиться без ошибок (вкладки, Word Count, Words, Dashboard, новый UI на Words). Затем `git checkout develop`.
 
 ## Чего не делать
 
@@ -53,4 +56,5 @@
 - [ ] На develop закоммичено всё по приложению (нет нужных правок в `git status`).
 - [ ] `npm run build` успешен.
 - [ ] Выполнен `git merge develop` в main (не выборочный merge файлов).
-- [ ] После деплоя выполнен `npx tsx scripts/testProd.ts`.
+- [ ] Выполнен **ручной деплой**: `npx vercel --yes --prod` (на ветке main).
+- [ ] После деплоя выполнен `npx tsx scripts/testProd.ts` — тест прошёл (в т.ч. New UI на Words).
