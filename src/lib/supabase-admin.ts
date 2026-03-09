@@ -6,6 +6,9 @@ function getAdmin(): SupabaseClient {
   if (!_admin) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+    if (!key) {
+      throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set. Add it in Vercel → Settings → Environment Variables (Production).");
+    }
     _admin = createClient(url, key);
   }
   return _admin;

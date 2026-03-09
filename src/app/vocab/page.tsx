@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -143,37 +143,21 @@ export default function VocabPage() {
     }
     const cumul: Record<string, number> = {};
     for (const k of dueKeys) cumul[k] = 0;
-    const out: Array<{ dayIndex: number; dayLabel: string; [key: string]: number | string }> = [];
+    const out: Array<{ dayIndex: number; dayLabel: string; total: number }> = [];
     for (let d = 1; d <= chartDaysInMonth; d++) {
       for (const k of dueKeys) cumul[k] += byWordByDayOfMonth.get(k)?.get(d) || 0;
+      const total = dueKeys.reduce((s, k) => s + (cumul[k] ?? 0), 0);
       out.push({
         dayIndex: d,
         dayLabel: `${String(d).padStart(2, "0")}.${String(chartMonth).padStart(2, "0")}`,
-        ...{ ...cumul },
+        total,
       });
     }
     return out;
   }, [due, reviewEvents, chartYear, chartMonth, chartDaysInMonth]);
 
-  const chartColors = useMemo(() => {
-    const neutral = "#9ca3af";
-    const active = "#22c55e";
-    return due.slice(0, 20).map((r) => ({
-      key: r.canonical_key,
-      word: r.display_word,
-      color: current?.canonical_key === r.canonical_key ? active : neutral,
-    }));
-  }, [due, current?.canonical_key]);
-
   const chartYMax = useMemo(() => {
-    let max = 0;
-    for (const row of chartData) {
-      for (const k of Object.keys(row)) {
-        if (k === "dayIndex" || k === "dayLabel") continue;
-        const v = Number((row as Record<string, unknown>)[k]);
-        if (!Number.isNaN(v) && v > max) max = v;
-      }
-    }
+    const max = Math.max(0, ...chartData.map((r) => r.total));
     return Math.max(1, max);
   }, [chartData]);
 
@@ -237,16 +221,19 @@ export default function VocabPage() {
       .eq("device_id", deviceId);
 
     const all = (allRaw || []) as ProgressRow[];
-    const dueRows = shuffle(
-      all
-        .filter((r) => !r.mastered_at && (r.correct_count < KNOWS_TO_ADVANCE || r.next_review_at <= nowIso))
-        .sort((a, b) => {
-          const aLearning = a.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
-          const bLearning = b.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
-          if (aLearning !== bLearning) return aLearning - bLearning;
-          return new Date(a.next_review_at).getTime() - new Date(b.next_review_at).getTime();
-        })
-    );
+    const filtered = all
+      .filter((r) => !r.mastered_at && (r.correct_count < KNOWS_TO_ADVANCE || r.next_review_at <= nowIso))
+      .sort((a, b) => {
+        const aLearning = a.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
+        const bLearning = b.correct_count < KNOWS_TO_ADVANCE ? 0 : 1;
+        if (aLearning !== bLearning) return aLearning - bLearning;
+        return new Date(a.next_review_at).getTime() - new Date(b.next_review_at).getTime();
+      });
+    const byKey = new Map<string, ProgressRow>();
+    for (const r of filtered) {
+      if (!byKey.has(r.canonical_key)) byKey.set(r.canonical_key, r);
+    }
+    const dueRows = shuffle([...byKey.values()]);
 
     const keys = [...new Set(dueRows.map((r) => r.canonical_key))];
     if (keys.length > 0) {
@@ -379,7 +366,22 @@ export default function VocabPage() {
       correct,
     });
 
-    await loadDeck(deviceId);
+    setShowAnswer(false);
+    setPendingAction(null);
+    const rest = due.filter((w) => w.canonical_key !== current.canonical_key);
+    if (masteredAt) {
+      const nextDue = rest;
+      setDue(nextDue);
+      setCurrent(nextDue[0] ?? null);
+      setStats((s) => ({ ...s, due: nextDue.length, mastered: s.mastered + 1 }));
+      if (nextDue.length === 0) await loadDeck(deviceId);
+    } else if (due.length > 1) {
+      const nextDue = [...due.slice(1), due[0]];
+      setDue(nextDue);
+      setCurrent(nextDue[0]);
+    } else {
+      await loadDeck(deviceId);
+    }
   }
 
   return (
@@ -470,14 +472,14 @@ export default function VocabPage() {
               )}
             </div>
 
-            {chartMounted && chartData.length > 0 && chartColors.length > 0 && (
+            {chartMounted && chartData.length > 0 && (
               <div className="mt-6">
                 <div className="text-sm text-gray-600 mb-2">
                   &quot;Know&quot; repetitions for {chartYear}-{String(chartMonth).padStart(2, "0")} (cumulative)
                 </div>
                 <div className="w-full" style={{ width: "100%", height: 224, minHeight: 224 }}>
                   <ResponsiveContainer width="100%" height={224}>
-                    <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 24 }}>
+                    <BarChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 24 }}>
                       <CartesianGrid stroke="#e5e7eb" vertical={false} />
                       <XAxis
                         dataKey="dayIndex"
@@ -490,21 +492,10 @@ export default function VocabPage() {
                       <YAxis width={24} tick={{ fontSize: 10 }} allowDecimals={false} domain={[0, chartYMax]} />
                       <Tooltip
                         labelFormatter={(_, payload) => payload?.[0]?.payload?.dayLabel ?? ""}
-                        formatter={(value, name) => [value, chartColors.find((c) => c.key === name)?.word ?? String(name)]}
+                        formatter={(value) => [value, "Know"]}
                       />
-                      {chartColors.map(({ key, word, color }) => (
-                        <Line
-                          key={key}
-                          type="stepAfter"
-                          dataKey={key}
-                          name={word}
-                          stroke={color}
-                          dot={{ r: 2, strokeWidth: 0 }}
-                          strokeWidth={2}
-                          isAnimationActive={false}
-                        />
-                      ))}
-                    </LineChart>
+                      <Bar dataKey="total" name="Know" fill="#22c55e" isAnimationActive={false} />
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>

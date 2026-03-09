@@ -145,21 +145,41 @@ async function fetchLemmasByEpisode(episodeIds: string[]): Promise<Record<string
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ episodeIds }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== text) throw e;
+    }
+    throw new Error(text || res.statusText);
+  }
   const json = await res.json();
   return json.lemmasByEpisode || {};
 }
 
+type DayPositions = Array<{ day: string; positions: Record<string, number> }>;
+
 async function fetchLemmasByDay(
   episodeIds: string[],
-  dayPositions: Array<{ day: string; positions: Record<string, number> }>
+  dayPositions: DayPositions
 ): Promise<Record<string, string[]>> {
   const res = await fetch("/api/episode-lemmas", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ episodeIds, dayPositions }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== text) throw e;
+    }
+    throw new Error(text || res.statusText);
+  }
   const json = await res.json();
   return json.lemmasByDay || {};
 }
@@ -482,7 +502,10 @@ export default function WordCountPage() {
           <div className="space-y-4">
             {loadError && (
               <div className="bg-amber-50 text-amber-800 text-sm rounded-lg px-3 py-2">
-                Lemmas API failed, showing word forms. {loadError}
+                Lemmas API failed, showing word forms.{" "}
+                {loadError.includes("SUPABASE_SERVICE_ROLE_KEY")
+                  ? "Add SUPABASE_SERVICE_ROLE_KEY in Vercel → Settings → Environment Variables (Production)."
+                  : loadError}
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">
