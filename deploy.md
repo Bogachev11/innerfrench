@@ -153,12 +153,14 @@ npm run dev
 
 ### 7.1. Настройка Vercel (один раз)
 
-1. **Git**: Vercel Dashboard → Project → **Settings** → **Git** → **Production Branch** = `main`. Иначе прод будет собираться с другой ветки.
-2. **Переменные**: Settings → **Environment Variables**:
-   - `NEXT_PUBLIC_SUPABASE_URL` (Production)
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Production)
-   - `OPENAI_API_KEY` (Production)  
-   `SUPABASE_SERVICE_ROLE_KEY` на Vercel **нужен** для API (word-info, episode-lemmas, prefill).
+**Чеклист перед каждым деплоем:** см. [DEPLOY_CHECKLIST.md](./DEPLOY_CHECKLIST.md).
+
+1. **Git**: Vercel Dashboard → Project → **Settings** → **Git** → **Production Branch** = `main`.
+2. **Переменные (обязательно все четыре в Production):** Settings → **Environment Variables**:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `OPENAI_API_KEY`
+   - **`SUPABASE_SERVICE_ROLE_KEY`** — без неё Word Count даёт 503 и «Lemmas API failed». Добавить и сделать Redeploy.
 
 ### 7.2. Обычный деплой (каждый раз строго по шагам)
 

@@ -515,8 +515,8 @@ export default function WordCountPage() {
             </div>
           <div className="px-2 pb-1 space-y-2">
             {barView && (
-              <div className="w-full" style={{ height: 240 }}>
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="w-full" style={{ height: 240, minHeight: 240 }}>
+                <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={barView.chartBarData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
                     <Tooltip content={<BarTooltip episodeTitles={episodeTitles} />} cursor={{ fill: "#f3f4f6" }} />
                     <CartesianGrid stroke="#e5e7eb" vertical={false} />
@@ -550,8 +550,8 @@ export default function WordCountPage() {
             {view2 && (
               <>
                 <div className="text-sm font-medium text-gray-700 px-2">Added words / Mastered</div>
-                <div className="w-full" style={{ height: 240 }}>
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="w-full" style={{ height: 240, minHeight: 240 }}>
+                  <ResponsiveContainer width="100%" height={240}>
                     <LineChart data={view2.chartData2} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
                       <defs>
                         <linearGradient id="addedWordsGrad" x1="0" y1="0" x2="1" y2="0">
