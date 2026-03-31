@@ -5,14 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { authenticated, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && !authenticated) {
       router.replace("/dashboard");
     }
-  }, [user, loading, router]);
+  }, [authenticated, loading, router]);
 
   if (loading) {
     return (
@@ -22,7 +22,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) return null;
+  if (!authenticated) return null;
 
   return <>{children}</>;
 }

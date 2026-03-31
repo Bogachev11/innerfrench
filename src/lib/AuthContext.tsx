@@ -1,69 +1,51 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
-import { createBrowserClient } from "@supabase/ssr";
-import type { User } from "@supabase/supabase-js";
 
-const ALLOWED_EMAIL = "bogachev11@gmail.com";
-
-const supabaseAuth = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
+const AUTH_KEY = "fp_authenticated";
 
 type AuthCtx = {
-  user: User | null;
+  authenticated: boolean;
   loading: boolean;
-  signIn: (email: string) => Promise<{ error?: string }>;
-  signOut: () => Promise<void>;
+  signIn: (password: string) => { error?: string };
+  signOut: () => void;
 };
 
 const AuthContext = createContext<AuthCtx>({
-  user: null,
+  authenticated: false,
   loading: true,
-  signIn: async () => ({}),
-  signOut: async () => {},
+  signIn: () => ({}),
+  signOut: () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [authenticated, setAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabaseAuth.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    const { data: { subscription } } = supabaseAuth.auth.onAuthStateChange(
-      (_event, session) => {
-        setUser(session?.user ?? null);
-        setLoading(false);
-      },
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const signIn = useCallback(async (email: string) => {
-    if (email.toLowerCase() !== ALLOWED_EMAIL) {
-      return { error: "Access restricted" };
+    const stored = localStorage.getItem(AUTH_KEY);
+    if (stored === "true") {
+      setAuthenticated(true);
     }
-    const { error } = await supabaseAuth.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth/callback` },
-    });
-    if (error) return { error: error.message };
-    return {};
+    setLoading(false);
   }, []);
 
-  const signOut = useCallback(async () => {
-    await supabaseAuth.auth.signOut();
-    setUser(null);
+  const signIn = useCallback((password: string) => {
+    if (password === process.env.NEXT_PUBLIC_APP_PASSWORD) {
+      setAuthenticated(true);
+      localStorage.setItem(AUTH_KEY, "true");
+      return {};
+    }
+    return { error: "Wrong password" };
+  }, []);
+
+  const signOut = useCallback(() => {
+    setAuthenticated(false);
+    localStorage.removeItem(AUTH_KEY);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ authenticated, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

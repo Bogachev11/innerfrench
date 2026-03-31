@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { useState } from "react";
 
@@ -14,24 +14,21 @@ const TABS = [
 
 export function TopTabs() {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, loading, signIn, signOut } = useAuth();
+  const { authenticated, loading, signIn, signOut } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
-  const [email, setEmail] = useState("");
-  const [loginStatus, setLoginStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
-  const visibleTabs = TABS.filter((t) => t.public || user);
+  const visibleTabs = TABS.filter((t) => t.public || authenticated);
 
-  async function handleSignIn() {
-    setLoginStatus("sending");
+  function handleSignIn() {
     setErrorMsg("");
-    const { error } = await signIn(email);
+    const { error } = signIn(password);
     if (error) {
-      setLoginStatus("error");
       setErrorMsg(error);
     } else {
-      setLoginStatus("sent");
+      setShowLogin(false);
+      setPassword("");
     }
   }
 
@@ -47,7 +44,7 @@ export function TopTabs() {
         {/* Auth button */}
         {!loading && (
           <div className="relative">
-            {user ? (
+            {authenticated ? (
               <button
                 onClick={() => signOut()}
                 className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700 hover:bg-emerald-100 transition-colors"
@@ -72,44 +69,27 @@ export function TopTabs() {
             )}
 
             {/* Login dropdown */}
-            {showLogin && !user && (
-              <div className="absolute right-0 top-full mt-2 w-72 rounded-xl bg-white shadow-lg ring-1 ring-gray-200 p-4 z-50">
-                {loginStatus === "sent" ? (
-                  <div className="text-center">
-                    <div className="text-2xl mb-2">✉️</div>
-                    <p className="text-sm font-medium text-gray-900">Check your email</p>
-                    <p className="text-xs text-gray-500 mt-1">Magic link sent to {email}</p>
-                    <button
-                      onClick={() => { setShowLogin(false); setLoginStatus("idle"); setEmail(""); }}
-                      className="mt-3 text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      Close
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
-                      placeholder="your@email.com"
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
-                      autoFocus
-                    />
-                    {loginStatus === "error" && (
-                      <p className="text-xs text-red-600 mt-1">{errorMsg}</p>
-                    )}
-                    <button
-                      onClick={handleSignIn}
-                      disabled={loginStatus === "sending" || !email}
-                      className="mt-2 w-full rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 transition-colors"
-                    >
-                      {loginStatus === "sending" ? "Sending..." : "Send Magic Link"}
-                    </button>
-                  </>
+            {showLogin && !authenticated && (
+              <div className="absolute right-0 top-full mt-2 w-64 rounded-xl bg-white shadow-lg ring-1 ring-gray-200 p-4 z-50">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
+                  placeholder="Password"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+                  autoFocus
+                />
+                {errorMsg && (
+                  <p className="text-xs text-red-600 mt-1">{errorMsg}</p>
                 )}
+                <button
+                  onClick={handleSignIn}
+                  disabled={!password}
+                  className="mt-2 w-full rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                >
+                  Sign in
+                </button>
               </div>
             )}
           </div>
