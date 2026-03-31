@@ -245,21 +245,21 @@ export default function DashboardPage() {
               <Card label="Streak" value={`⚡ ${model.streakDays}`} />
             </div>
 
-            <section className="space-y-2">
+            <section>
               {/* section title removed */}
-              <div className="space-y-4">
+              <div className="space-y-0">
                 {model.months.map((month) => {
                   const hasEpisodes = month.days.some((d) => d.episodes.length > 0);
                   return (
                   <div key={month.key} className="space-y-0">
                     <div className="text-xs text-gray-500 font-medium">{month.label}</div>
                     <div
-                      className="grid gap-0"
-                      style={{ gridTemplateColumns: `repeat(31, minmax(0, 1fr))`, minHeight: hasEpisodes ? undefined : 60 }}
+                      className="grid gap-0 items-end"
+                      style={{ gridTemplateColumns: `repeat(31, minmax(0, 1fr))`, minHeight: hasEpisodes ? undefined : 40 }}
                     >
                       {month.days.map((day) => (
                         <div key={day.key} className="min-w-0">
-                          <div className="grid grid-rows-4 gap-0">
+                          <div className="flex flex-col justify-end">
                             {Array.from({ length: 4 }).map((_, i) => {
                               const shown = [...day.episodes]
                                 .sort((a, b) => {
@@ -478,7 +478,7 @@ function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots
   const lastDay = dayNums[dayNums.length - 1];
 
   return (
-    <div className="relative h-7">
+    <div className="relative h-5">
       <div className="absolute top-0 border-t border-black" style={{ left: 0, width: `${(dayNums.length / totalSlots) * 100}%` }} />
       {dayNums.map((day, idx) => {
         const isLabel = day === first || day === 10 || day === 20 || day === lastDay;
@@ -492,7 +492,7 @@ function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots
             style={style}
           >
             <div className="w-px h-1 bg-black mx-auto" />
-            <div className="text-[14px] leading-none text-gray-700 mt-0">{day}</div>
+            <div className="text-[11px] leading-none text-gray-700 mt-0">{day}</div>
           </div>
         );
       })}
