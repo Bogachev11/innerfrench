@@ -30,10 +30,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabaseAuth.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    // Handle PKCE code exchange from magic link redirect
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      supabaseAuth.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (!error && data.session) {
+          setUser(data.session.user);
+          // Clean up URL
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+        setLoading(false);
+      });
+    } else {
+      supabaseAuth.auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user ?? null);
+        setLoading(false);
+      });
+    }
 
     const { data: { subscription } } = supabaseAuth.auth.onAuthStateChange(
       (_event, session) => {
