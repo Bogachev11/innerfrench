@@ -135,7 +135,6 @@ export default function VocabPage() {
   const [allProgress, setAllProgress] = useState<ProgressRow[]>([]);
   const [wordCreatedAtByKey, setWordCreatedAtByKey] = useState<Record<string, string>>({});
   const [shownInRound, setShownInRound] = useState<Set<string>>(new Set());
-  const [animatingFrom, setAnimatingFrom] = useState<number | null>(null);
   useEffect(() => {
     if (current) addShownToday(current.canonical_key);
   }, [current?.canonical_key]);
@@ -378,11 +377,6 @@ export default function VocabPage() {
 
   async function answerCard(correct: boolean) {
     if (!current) return;
-    // Trigger histogram animation for learning words
-    if (correct && !current.mastered_at && current.correct_count < 5) {
-      setAnimatingFrom(current.correct_count);
-      setTimeout(() => setAnimatingFrom(null), 500);
-    }
     addShownToday(current.canonical_key);
     const nowIso = new Date().toISOString();
     const alreadyMastered = !!current.mastered_at;
@@ -511,29 +505,20 @@ export default function VocabPage() {
     }).length;
   }, [allProgress]);
 
-  // Histogram: learning words grouped by correct_count (0-5)
-  const histogramData = useMemo(() => {
-    const bins = [0, 0, 0, 0, 0, 0]; // indices 0-5
+  // Histogram: learning words grouped by correct_count (0-5), per-word stripes
+  const histogramBins = useMemo(() => {
+    const bins: string[][] = [[], [], [], [], [], []]; // indices 0-5, arrays of canonical_keys
     for (const r of allProgress) {
-      if (r.mastered_at) continue; // skip mastered (in review)
+      if (r.mastered_at) continue;
       const idx = Math.min(5, Math.max(0, r.correct_count));
-      bins[idx]++;
+      bins[idx].push(r.canonical_key);
     }
     return bins;
   }, [allProgress]);
 
-  const histogramMax = useMemo(() => Math.max(1, ...histogramData), [histogramData]);
+  const histogramMax = useMemo(() => Math.max(1, ...histogramBins.map((b) => b.length)), [histogramBins]);
 
-  // Adjusted histogram for animation: when animatingFrom is set, shift one item
-  const displayHistogram = useMemo(() => {
-    const bins = [...histogramData];
-    if (animatingFrom !== null && animatingFrom < 5 && bins[animatingFrom] > 0) {
-      bins[animatingFrom]--;
-      bins[animatingFrom + 1]++;
-    }
-    return bins;
-  }, [histogramData, animatingFrom]);
-
+  const currentKey = current?.canonical_key ?? null;
   const currentBin = current && !current.mastered_at ? Math.min(5, Math.max(0, current.correct_count)) : null;
 
   return (
@@ -575,45 +560,37 @@ export default function VocabPage() {
               onDelete={() => deleteWord(current)}
             />
 
-            {/* Histogram: words by correct_count */}
+            {/* Histogram: words by correct_count, each word = stripe */}
             {totalCount > 0 && (
               <div className="flex items-end gap-1.5 px-1" style={{ height: 140 }}>
-                {displayHistogram.map((count, i) => {
+                {histogramBins.map((keys, i) => {
+                  const count = keys.length;
                   const pct = histogramMax > 0 ? (count / histogramMax) * 100 : 0;
-                  const isActive = currentBin === i;
-                  const isAnimTarget = animatingFrom !== null && i === animatingFrom + 1;
-                  // Each bar is a stack of 1px segments; active word = green segment at top
-                  const activeSegments = isActive ? 1 : 0;
-                  const graySegments = count - activeSegments;
+                  const isActiveBin = currentBin === i;
                   return (
                     <div key={i} className="flex-1 flex flex-col items-center" style={{ height: "100%" }}>
-                      <div className="flex-1 w-full flex flex-col justify-end items-center relative">
+                      <div className="flex-1 w-full flex flex-col justify-end items-center">
                         {count > 0 && (
                           <div className="text-[10px] tabular-nums text-gray-400 mb-0.5">{count}</div>
                         )}
                         <div
-                          className="w-full flex flex-col justify-end rounded-t overflow-hidden transition-all duration-400 ease-out"
-                          style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
+                          className="w-full rounded-t overflow-hidden transition-all duration-400 ease-out flex flex-col-reverse"
+                          style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%`, gap: 1 }}
                         >
-                          {isActive && (
+                          {keys.map((key) => (
                             <div
-                              className="w-full transition-all duration-400"
+                              key={key}
+                              className="w-full transition-colors duration-300"
                               style={{
-                                height: `${(1 / Math.max(1, count)) * 100}%`,
-                                minHeight: 3,
-                                backgroundColor: "#22c55e",
+                                flex: `0 0 ${Math.max(100 / Math.max(1, count), 2)}%`,
+                                minHeight: 2,
+                                backgroundColor: key === currentKey ? "#22c55e" : "#d1d5db",
                               }}
                             />
-                          )}
-                          <div
-                            className="w-full flex-1"
-                            style={{
-                              backgroundColor: isAnimTarget ? "#86efac" : "#d1d5db",
-                            }}
-                          />
+                          ))}
                         </div>
                       </div>
-                      <div className={`text-[11px] tabular-nums mt-0.5 ${isActive ? "font-bold text-emerald-600" : "text-gray-500"}`}>{i}</div>
+                      <div className={`text-[11px] tabular-nums mt-0.5 ${isActiveBin ? "font-bold text-emerald-600" : "text-gray-500"}`}>{i}</div>
                     </div>
                   );
                 })}
