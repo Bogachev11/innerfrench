@@ -248,12 +248,14 @@ export default function DashboardPage() {
             <section className="space-y-2">
               {/* section title removed */}
               <div className="space-y-4">
-                {model.months.map((month) => (
+                {model.months.map((month) => {
+                  const hasEpisodes = month.days.some((d) => d.episodes.length > 0);
+                  return (
                   <div key={month.key} className="space-y-0">
                     <div className="text-xs text-gray-500 font-medium">{month.label}</div>
                     <div
                       className="grid gap-0"
-                      style={{ gridTemplateColumns: `repeat(${month.days.length}, minmax(0, 1fr))` }}
+                      style={{ gridTemplateColumns: `repeat(31, minmax(0, 1fr))`, minHeight: hasEpisodes ? undefined : 60 }}
                     >
                       {month.days.map((day) => (
                         <div key={day.key} className="min-w-0">
@@ -287,7 +289,8 @@ export default function DashboardPage() {
                       <MonthAxis dayKeys={month.days.map((d) => d.key)} />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
 
@@ -358,7 +361,7 @@ function dayKey(input: string | Date): string {
 function monthLabel(key: string): string {
   const [y, m] = key.split("-").map(Number);
   const d = new Date(Date.UTC(y, m - 1, 1));
-  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(d);
+  return new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(d);
 }
 
 function keyToUtcMs(key: string): number {
@@ -468,7 +471,7 @@ function CompletedCard({ completed, total }: { completed: number; total: number 
   );
 }
 
-function MonthAxis({ dayKeys }: { dayKeys: string[] }) {
+function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots?: number }) {
   if (dayKeys.length === 0) return null;
   const dayNums = dayKeys.map((k) => Number(k.slice(8, 10)));
   const first = dayNums[0];
@@ -476,11 +479,11 @@ function MonthAxis({ dayKeys }: { dayKeys: string[] }) {
 
   return (
     <div className="relative h-7">
-      <div className="absolute left-0 right-0 top-0 border-t border-black" />
+      <div className="absolute top-0 border-t border-black" style={{ left: 0, width: `${(dayNums.length / totalSlots) * 100}%` }} />
       {dayNums.map((day, idx) => {
         const isLabel = day === first || day === 10 || day === 20 || day === lastDay;
         if (!isLabel) return null;
-        const pct = ((idx + 0.5) / dayNums.length) * 100;
+        const pct = ((idx + 0.5) / totalSlots) * 100;
         const style = { left: `${pct}%`, transform: "translateX(-50%)" };
         return (
           <div
