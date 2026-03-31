@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const { error } = await supabaseAuth.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: process.env.NEXT_PUBLIC_SITE_URL || window.location.origin },
     });
     if (error) return { error: error.message };
     return {};
