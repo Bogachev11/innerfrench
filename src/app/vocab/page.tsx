@@ -574,17 +574,18 @@ export default function VocabPage() {
                           <div className="text-[10px] tabular-nums text-gray-400 mb-0.5">{count}</div>
                         )}
                         <div
-                          className="w-full rounded-t overflow-hidden transition-all duration-400 ease-out flex flex-col-reverse"
-                          style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%`, gap: 1 }}
+                          className="w-full rounded-t overflow-hidden transition-all duration-400 ease-out flex flex-col"
+                          style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
                         >
                           {keys.map((key) => (
                             <div
                               key={key}
                               className="w-full transition-colors duration-300"
                               style={{
-                                flex: `0 0 ${Math.max(100 / Math.max(1, count), 2)}%`,
-                                minHeight: 2,
+                                flex: 1,
+                                minHeight: 0,
                                 backgroundColor: key === currentKey ? "#22c55e" : "#d1d5db",
+                                borderBottom: count > 1 ? "1px solid rgba(255,255,255,0.5)" : undefined,
                               }}
                             />
                           ))}
