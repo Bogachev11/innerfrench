@@ -505,13 +505,24 @@ export default function VocabPage() {
     }).length;
   }, [allProgress]);
 
-  // Histogram: learning words grouped by correct_count (0-5), per-word stripes
+  // Histogram: learning words (0-5) + week review (6) + month review (7)
+  const HIST_LABELS = ["0", "1", "2", "3", "4", "5", "week", "month"];
   const histogramBins = useMemo(() => {
-    const bins: string[][] = [[], [], [], [], [], []]; // indices 0-5, arrays of canonical_keys
+    const bins: string[][] = [[], [], [], [], [], [], [], []]; // 0-5, week(6), month(7)
     for (const r of allProgress) {
-      if (r.mastered_at) continue;
-      const idx = Math.min(5, Math.max(0, r.correct_count));
-      bins[idx].push(r.canonical_key);
+      if (r.mastered_at) {
+        const masteredMs = new Date(r.mastered_at).getTime();
+        const nextMs = new Date(r.next_review_at).getTime();
+        // If next_review > mastered + 14 days, it's past the week review → month
+        if (nextMs > masteredMs + 14 * 86400000) {
+          bins[7].push(r.canonical_key); // month
+        } else {
+          bins[6].push(r.canonical_key); // week
+        }
+      } else {
+        const idx = Math.min(5, Math.max(0, r.correct_count));
+        bins[idx].push(r.canonical_key);
+      }
     }
     return bins;
   }, [allProgress]);
@@ -519,7 +530,14 @@ export default function VocabPage() {
   const histogramMax = useMemo(() => Math.max(1, ...histogramBins.map((b) => b.length)), [histogramBins]);
 
   const currentKey = current?.canonical_key ?? null;
-  const currentBin = current && !current.mastered_at ? Math.min(5, Math.max(0, current.correct_count)) : null;
+  // Find which bin the current word is in
+  const currentBin = useMemo(() => {
+    if (!currentKey) return null;
+    for (let i = 0; i < histogramBins.length; i++) {
+      if (histogramBins[i].includes(currentKey)) return i;
+    }
+    return null;
+  }, [currentKey, histogramBins]);
 
   return (
     <RequireAuth>
@@ -560,15 +578,16 @@ export default function VocabPage() {
               onDelete={() => deleteWord(current)}
             />
 
-            {/* Histogram: words by correct_count, each word = stripe */}
+            {/* Histogram: words by correct_count + week/month review */}
             {totalCount > 0 && (
               <div className="flex items-end gap-1.5 px-1" style={{ height: 140 }}>
                 {histogramBins.map((keys, i) => {
                   const count = keys.length;
                   const pct = histogramMax > 0 ? (count / histogramMax) * 100 : 0;
                   const isActiveBin = currentBin === i;
+                  const isSeparator = i === 6; // gap before week
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center" style={{ height: "100%" }}>
+                    <div key={i} className={`flex-1 flex flex-col items-center ${isSeparator ? "ml-2 border-l border-gray-200 pl-1.5" : ""}`} style={{ height: "100%" }}>
                       <div className="flex-1 w-full flex flex-col justify-end items-center">
                         {count > 0 && (
                           <div className="text-[10px] tabular-nums text-gray-400 mb-0.5">{count}</div>
@@ -584,14 +603,14 @@ export default function VocabPage() {
                               style={{
                                 flex: 1,
                                 minHeight: 0,
-                                backgroundColor: key === currentKey ? "#22c55e" : "#d1d5db",
+                                backgroundColor: key === currentKey ? "#22c55e" : i >= 6 ? "#93c5fd" : "#d1d5db",
                                 borderBottom: count > 1 ? "1px solid rgba(255,255,255,0.5)" : undefined,
                               }}
                             />
                           ))}
                         </div>
                       </div>
-                      <div className={`text-[11px] tabular-nums mt-0.5 ${isActiveBin ? "font-bold text-emerald-600" : "text-gray-500"}`}>{i}</div>
+                      <div className={`text-[10px] tabular-nums mt-0.5 ${isActiveBin ? "font-bold text-emerald-600" : i >= 6 ? "text-blue-400" : "text-gray-500"}`}>{HIST_LABELS[i]}</div>
                     </div>
                   );
                 })}
