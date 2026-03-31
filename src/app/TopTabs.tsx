@@ -37,7 +37,7 @@ export function TopTabs() {
       {/* Header */}
       <div className="mx-auto max-w-2xl px-4 pt-4 pb-3 flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Learning French Through Listening</h1>
+          <h1 className="text-2xl font-bold tracking-tight leading-[1.15]">Learning French Through Listening</h1>
           <p className="text-sm text-gray-500">Based on podcasts via innerfrench.com</p>
         </div>
 

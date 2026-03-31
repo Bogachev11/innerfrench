@@ -135,6 +135,7 @@ export default function VocabPage() {
   const [allProgress, setAllProgress] = useState<ProgressRow[]>([]);
   const [wordCreatedAtByKey, setWordCreatedAtByKey] = useState<Record<string, string>>({});
   const [shownInRound, setShownInRound] = useState<Set<string>>(new Set());
+  const [animatingFrom, setAnimatingFrom] = useState<number | null>(null);
   useEffect(() => {
     if (current) addShownToday(current.canonical_key);
   }, [current?.canonical_key]);
@@ -377,6 +378,11 @@ export default function VocabPage() {
 
   async function answerCard(correct: boolean) {
     if (!current) return;
+    // Trigger histogram animation for learning words
+    if (correct && !current.mastered_at && current.correct_count < 5) {
+      setAnimatingFrom(current.correct_count);
+      setTimeout(() => setAnimatingFrom(null), 500);
+    }
     addShownToday(current.canonical_key);
     const nowIso = new Date().toISOString();
     const alreadyMastered = !!current.mastered_at;
@@ -486,15 +492,68 @@ export default function VocabPage() {
     await loadDeck(PROGRESS_DEVICE_ID);
   }
 
+  // New KPI computations
+  const learnedCount = useMemo(() => allProgress.filter((r) => !!r.mastered_at).length, [allProgress]);
+  const totalCount = allProgress.length;
+
+  const addedThisWeek = useMemo(() => {
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    return Object.values(wordCreatedAtByKey).filter((d) => d >= weekAgo).length;
+  }, [wordCreatedAtByKey]);
+
+  const fullyMastered = useMemo(() => {
+    // Words that completed at least the 7-day review (next_review_at > mastered_at + 14 days)
+    return allProgress.filter((r) => {
+      if (!r.mastered_at) return false;
+      const masteredMs = new Date(r.mastered_at).getTime();
+      const nextMs = new Date(r.next_review_at).getTime();
+      return nextMs > masteredMs + 14 * 86400000;
+    }).length;
+  }, [allProgress]);
+
+  // Histogram: learning words grouped by correct_count (0-5)
+  const histogramData = useMemo(() => {
+    const bins = [0, 0, 0, 0, 0, 0]; // indices 0-5
+    for (const r of allProgress) {
+      if (r.mastered_at) continue; // skip mastered (in review)
+      const idx = Math.min(5, Math.max(0, r.correct_count));
+      bins[idx]++;
+    }
+    return bins;
+  }, [allProgress]);
+
+  const histogramMax = useMemo(() => Math.max(1, ...histogramData), [histogramData]);
+
+  // Adjusted histogram for animation: when animatingFrom is set, shift one item
+  const displayHistogram = useMemo(() => {
+    const bins = [...histogramData];
+    if (animatingFrom !== null && animatingFrom < 5 && bins[animatingFrom] > 0) {
+      bins[animatingFrom]--;
+      bins[animatingFrom + 1]++;
+    }
+    return bins;
+  }, [histogramData, animatingFrom]);
+
+  const currentBin = current && !current.mastered_at ? Math.min(5, Math.max(0, current.correct_count)) : null;
+
   return (
     <RequireAuth>
-    <div className="min-h-screen">
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-        <div className="grid grid-cols-4 gap-2 max-w-lg">
-          <Kpi value={String(stats.total)} label="Total" />
-          <Kpi value={String(stats.due)} label="Due" />
-          <Kpi value={String(stats.mastered)} label="Mastered" />
-          <Kpi value={progressText} label="Mastery" />
+    <div>
+      <main className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+        {/* KPI cards */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+            <div className="text-lg font-bold tabular-nums">{learnedCount}<span className="text-gray-400 font-normal">/{totalCount}</span></div>
+            <div className="text-[11px] text-gray-500">Learned</div>
+          </div>
+          <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+            <div className="text-lg font-bold tabular-nums text-emerald-600">+{addedThisWeek}</div>
+            <div className="text-[11px] text-gray-500">This week</div>
+          </div>
+          <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+            <div className="text-lg font-bold tabular-nums">{fullyMastered}</div>
+            <div className="text-[11px] text-gray-500">Mastered</div>
+          </div>
         </div>
 
         {loading ? (
@@ -504,7 +563,7 @@ export default function VocabPage() {
             No due words right now. Great job.
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <VocabCard
               current={current}
               info={infoByCanonical[current.canonical_key]}
@@ -515,6 +574,51 @@ export default function VocabPage() {
               onSwipeRight={() => answerCard(true)}
               onDelete={() => deleteWord(current)}
             />
+
+            {/* Histogram: words by correct_count */}
+            {totalCount > 0 && (
+              <div className="flex items-end gap-1.5 px-1" style={{ height: 140 }}>
+                {displayHistogram.map((count, i) => {
+                  const pct = histogramMax > 0 ? (count / histogramMax) * 100 : 0;
+                  const isActive = currentBin === i;
+                  const isAnimTarget = animatingFrom !== null && i === animatingFrom + 1;
+                  // Each bar is a stack of 1px segments; active word = green segment at top
+                  const activeSegments = isActive ? 1 : 0;
+                  const graySegments = count - activeSegments;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center" style={{ height: "100%" }}>
+                      <div className="flex-1 w-full flex flex-col justify-end items-center relative">
+                        {count > 0 && (
+                          <div className="text-[10px] tabular-nums text-gray-400 mb-0.5">{count}</div>
+                        )}
+                        <div
+                          className="w-full flex flex-col justify-end rounded-t overflow-hidden transition-all duration-400 ease-out"
+                          style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
+                        >
+                          {isActive && (
+                            <div
+                              className="w-full transition-all duration-400"
+                              style={{
+                                height: `${(1 / Math.max(1, count)) * 100}%`,
+                                minHeight: 3,
+                                backgroundColor: "#22c55e",
+                              }}
+                            />
+                          )}
+                          <div
+                            className="w-full flex-1"
+                            style={{
+                              backgroundColor: isAnimTarget ? "#86efac" : "#d1d5db",
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className={`text-[11px] tabular-nums mt-0.5 ${isActive ? "font-bold text-emerald-600" : "text-gray-500"}`}>{i}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
           </div>
         )}
