@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Episode } from "@/lib/types";
 import { EpisodeList } from "./EpisodeList";
+import { RequireAuth } from "@/lib/RequireAuth";
 
 export const revalidate = 60;
 
@@ -17,10 +18,12 @@ export default async function EpisodesPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <main className="max-w-2xl mx-auto px-4 py-4">
-        <EpisodeList episodes={episodes ?? []} />
-      </main>
-    </div>
+    <RequireAuth>
+      <div className="min-h-screen">
+        <main className="max-w-2xl mx-auto px-4 py-4">
+          <EpisodeList episodes={episodes ?? []} />
+        </main>
+      </div>
+    </RequireAuth>
   );
 }

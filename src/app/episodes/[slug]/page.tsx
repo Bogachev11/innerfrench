@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import type { Episode, Segment } from "@/lib/types";
 import { notFound } from "next/navigation";
 import { EpisodePlayer } from "./EpisodePlayer";
+import { RequireAuth } from "@/lib/RequireAuth";
 
 export const revalidate = 3600;
 
@@ -27,9 +28,11 @@ export default async function EpisodePage({
     .order("idx", { ascending: true });
 
   return (
-    <EpisodePlayer
-      episode={episode as Episode}
-      segments={(segments as Segment[]) || []}
-    />
+    <RequireAuth>
+      <EpisodePlayer
+        episode={episode as Episode}
+        segments={(segments as Segment[]) || []}
+      />
+    </RequireAuth>
   );
 }

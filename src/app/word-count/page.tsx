@@ -196,6 +196,7 @@ export default function WordCountPage() {
   const [pointsMastered, setPointsMastered] = useState<Point[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [chartMode, setChartMode] = useState<"cumulative" | "daily">("cumulative");
 
   useEffect(() => {
     setLoadError(null);
@@ -211,8 +212,6 @@ export default function WordCountPage() {
     let sessions = sessionsRaw || [];
     let effectiveDeviceId = deviceId;
 
-    // Same fallback as dashboard: if current browser has a new device_id,
-    // adopt the most active historical one in this single-user setup.
     if (sessions.length === 0) {
       const { data: allSessions } = await supabase
         .from("listening_sessions")
@@ -234,8 +233,37 @@ export default function WordCountPage() {
       }
     }
 
-    const firstDayByEpisode = new Map<string, string>();
+    // Build session fingerprint: hash of session count + last session timestamp
+    const sessionHash = `${sessions.length}_${sessions.length > 0 ? sessions[sessions.length - 1]?.started_at : ""}`;
+    const today = dayKey(new Date());
+    const fullCacheKey = `wc_full_${effectiveDeviceId}`;
+
+    // Try full cache first — instant load if sessions haven't changed
+    try {
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(fullCacheKey) : null;
+      if (raw) {
+        const cached = JSON.parse(raw) as {
+          sessionHash: string;
+          today: string;
+          points: Point[];
+          barData: BarPoint[];
+          titles: Record<string, string>;
+          pointsAdded: Point[];
+          pointsMastered: Point[];
+        };
+        if (cached.sessionHash === sessionHash && cached.today === today) {
+          setPoints(cached.points);
+          setBarData(cached.barData);
+          setEpisodeTitles(cached.titles);
+          setPointsAdded(cached.pointsAdded);
+          setPointsMastered(cached.pointsMastered);
+          return;
+        }
+      }
+    } catch (_) {}
+
     const sessionsByDay = new Map<string, Set<string>>();
+    const firstDayByEpisode = new Map<string, string>();
     for (const s of sessions) {
       const ep = String(s.episode_id);
       const day = dayKey(s.started_at as string);
@@ -266,98 +294,82 @@ export default function WordCountPage() {
 
     const allSessionDays = [...sessionsByDay.keys()].sort();
     const lastSessionDay = allSessionDays.length ? allSessionDays[allSessionDays.length - 1] : [...firstDayByEpisode.values()].sort().slice(-1)[0] || START_KEY;
-    const today = dayKey(new Date());
     const minHorizon = addMonthsToKey(START_KEY, 3);
     const lastDay = [lastSessionDay, today, minHorizon].sort().slice(-1)[0];
 
-    const dayPositions: Array<{ day: string; positions: Record<string, number> }> = [];
-    for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
-      const positions: Record<string, number> = {};
-      for (const s of sessions) {
-        const ep = String(s.episode_id);
-        const sessionDay = dayKey(s.started_at as string);
-        if (sessionDay > cursor) continue;
-        const pos = Number((s as { end_position_ms?: number }).end_position_ms) || 0;
-        positions[ep] = Math.max(positions[ep] ?? 0, pos);
-      }
-      dayPositions.push({ day: cursor, positions });
-    }
-
-    const out: Point[] = [];
-    const barOut: BarPoint[] = [];
-    let dayIndex = 0;
+    // Fetch lemmas per episode (single API call) with localStorage cache
+    let lemmasByEpisode = new Map<string, Set<string>>();
+    const epLemmasCacheKey = `wc_ep_lemmas_${effectiveDeviceId}`;
 
     try {
-      const lemmasByDay = await fetchLemmasByDay(episodeIds, dayPositions);
-      const cumulative = new Set<string>();
-      for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
-        dayIndex += 1;
-        const currArr = lemmasByDay[cursor] || [];
-        const currSet = new Set(currArr);
-        let newCount = 0;
-        let repeatedCount = 0;
-        for (const l of currSet) {
-          if (cumulative.has(l)) repeatedCount += 1;
-          else newCount += 1;
-          cumulative.add(l);
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(epLemmasCacheKey) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as { data: Record<string, string[]>; episodeIds: string[] };
+        const cachedIds = new Set(parsed.episodeIds || []);
+        if (episodeIds.every((id) => cachedIds.has(id)) && cachedIds.size === episodeIds.length) {
+          for (const [ep, arr] of Object.entries(parsed.data)) {
+            lemmasByEpisode.set(ep, new Set(arr));
+          }
         }
-        out.push({ day: cursor, value: cumulative.size });
-        barOut.push({
-          day: cursor,
-          dayIndex,
-          new: newCount,
-          repeated: repeatedCount,
-          episodeIds: episodesByDay.get(cursor) || [],
-        });
       }
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
-      out.length = 0;
-      barOut.length = 0;
-      let lemmasByEpisode = new Map<string, Set<string>>();
+    } catch (_) {}
+
+    if (lemmasByEpisode.size === 0) {
       try {
         const raw = await fetchLemmasByEpisode(episodeIds);
         for (const [ep, arr] of Object.entries(raw)) lemmasByEpisode.set(ep, new Set(arr as string[]));
       } catch {
-        const segments = await fetchSegmentsForEpisodes(episodeIds);
-        for (const s of segments) {
-          const ep = String(s.episode_id);
-          if (!lemmasByEpisode.has(ep)) lemmasByEpisode.set(ep, new Set());
-          for (const t of tokenize(String(s.fr_text || ""))) lemmasByEpisode.get(ep)!.add(t);
+        try {
+          const segments = await fetchSegmentsForEpisodes(episodeIds);
+          for (const s of segments) {
+            const ep = String(s.episode_id);
+            if (!lemmasByEpisode.has(ep)) lemmasByEpisode.set(ep, new Set());
+            for (const t of tokenize(String(s.fr_text || ""))) lemmasByEpisode.get(ep)!.add(t);
+          }
+        } catch (e) {
+          setLoadError(e instanceof Error ? e.message : String(e));
         }
       }
-      const newLemmasByDay = new Map<string, Set<string>>();
-      for (const [day, epSet] of sessionsByDay.entries()) {
-        if (!newLemmasByDay.has(day)) newLemmasByDay.set(day, new Set());
-        const dst = newLemmasByDay.get(day)!;
-        for (const ep of epSet) {
-          const lemmas = lemmasByEpisode.get(ep);
-          if (lemmas) for (const l of lemmas) dst.add(l);
-        }
+      if (lemmasByEpisode.size > 0) {
+        try {
+          const data: Record<string, string[]> = {};
+          for (const [ep, set] of lemmasByEpisode) data[ep] = [...set];
+          localStorage.setItem(epLemmasCacheKey, JSON.stringify({ data, episodeIds }));
+        } catch (_) {}
       }
-      const cumulative = new Set<string>();
-      dayIndex = 0;
-      for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
-        dayIndex += 1;
-        let newCount = 0;
-        let repeatedCount = 0;
-        const plus = newLemmasByDay.get(cursor);
-        if (plus) {
-          for (const l of plus) {
-            if (cumulative.has(l)) repeatedCount += 1;
-            else newCount += 1;
-            cumulative.add(l);
+    }
+
+    // Build cumulative word count by day
+    const cumulativeLemmas = new Set<string>();
+    const out: Point[] = [];
+    const barOut: BarPoint[] = [];
+    let dayIndex = 0;
+
+    for (let cursor = START_KEY; cursor <= lastDay; cursor = addDay(cursor)) {
+      dayIndex += 1;
+      const dayEps = sessionsByDay.get(cursor);
+      let newCount = 0;
+      let repeatedCount = 0;
+      if (dayEps) {
+        for (const ep of dayEps) {
+          const epLemmas = lemmasByEpisode.get(ep);
+          if (epLemmas) {
+            for (const l of epLemmas) {
+              if (cumulativeLemmas.has(l)) repeatedCount += 1;
+              else newCount += 1;
+              cumulativeLemmas.add(l);
+            }
           }
         }
-        out.push({ day: cursor, value: cumulative.size });
-        barOut.push({
-          day: cursor,
-          dayIndex,
-          new: newCount,
-          repeated: repeatedCount,
-          episodeIds: episodesByDay.get(cursor) || [],
-        });
       }
+      out.push({ day: cursor, value: cumulativeLemmas.size });
+      barOut.push({
+        day: cursor,
+        dayIndex,
+        new: newCount,
+        repeated: repeatedCount,
+        episodeIds: episodesByDay.get(cursor) || [],
+      });
     }
 
     setPoints(out);
@@ -397,6 +409,19 @@ export default function WordCountPage() {
     }
     setPointsAdded(addedPoints);
     setPointsMastered(masteredPoints);
+
+    // Save full cache — next load with same sessions + same day is instant
+    try {
+      localStorage.setItem(fullCacheKey, JSON.stringify({
+        sessionHash,
+        today,
+        points: out,
+        barData: barOut,
+        titles,
+        pointsAdded: addedPoints,
+        pointsMastered: masteredPoints,
+      }));
+    } catch (_) {}
   }
 
   const view = useMemo(() => {
@@ -447,8 +472,21 @@ export default function WordCountPage() {
     const maxBar = Math.max(EMPTY_DAY_BAR + 1, ...chartBarData.map((d) => d.minBar + d.new + d.repeated));
     const yTicksBar = buildYTicks(maxBar);
     const yMaxBar = yTicksBar[yTicksBar.length - 1] ?? maxBar;
+
+    // Cumulative bars: gray = all known words before today, green = new today
+    const cumulBarData = barData.slice(0, todayIndex).map((d, i) => {
+      const prevCumul = i > 0 ? points[i - 1].value : 0;
+      const hasActivity = d.new + d.repeated > 0;
+      return {
+        ...d,
+        known: hasActivity ? prevCumul : 0,
+        minBar: hasActivity ? 0 : EMPTY_DAY_BAR,
+      };
+    });
+
     return {
       chartBarData,
+      cumulBarData,
       yTicksBar,
       yMaxBar,
       totalDays: view.totalDays,
@@ -489,8 +527,8 @@ export default function WordCountPage() {
     : 0;
 
   return (
-    <div className="min-h-screen">
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+    <div>
+      <main className="max-w-2xl mx-auto px-4 pt-3 pb-0 space-y-2">
         {loading ? (
           <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">Loading...</div>
         ) : !view ? (
@@ -513,45 +551,98 @@ export default function WordCountPage() {
               <WordCountCard label="Added" value={addedCount} />
               <WordCountCard label="Mastered" value={masteredCount} />
             </div>
-          <div className="px-2 pb-1 space-y-2">
-            {barView && (
-              <div className="w-full" style={{ height: 240, minHeight: 240 }}>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={barView.chartBarData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
-                    <Tooltip content={<BarTooltip episodeTitles={episodeTitles} />} cursor={{ fill: "#f3f4f6" }} />
-                    <CartesianGrid stroke="#e5e7eb" vertical={false} />
-                    <XAxis
-                      type="number"
-                      dataKey="dayIndex"
-                      domain={[1, barView.totalDays]}
-                      ticks={barView.monthTicks}
-                      tickFormatter={(v) => barView.monthLabelByTick.get(Number(v)) || ""}
-                      tick={{ fill: "#374151", fontSize: 12 }}
-                      axisLine={{ stroke: "#111827" }}
-                      tickLine={{ stroke: "#111827" }}
-                    />
-                    <YAxis
-                      width={28}
-                      axisLine={false}
-                      fontSize={12}
-                      tickFormatter={fmtY}
-                      ticks={barView.yTicksBar}
-                      domain={[0, barView.yMaxBar]}
-                      tick={{ fill: "#374151" }}
-                      tickLine={false}
-                    />
-                    <Bar dataKey="minBar" stackId="a" fill="#e5e7eb" isAnimationActive={false} />
-                    <Bar dataKey="repeated" stackId="a" fill="#d1d5db" isAnimationActive={false} />
-                    <Bar dataKey="new" stackId="a" fill="#22c55e" isAnimationActive={false} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+          <div className="px-2 pb-0 space-y-1">
+            {(barView || view) && (
+              <>
+                <div className="flex justify-end">
+                  <div className="inline-flex rounded-md bg-gray-100 p-0.5 text-xs">
+                    <button
+                      onClick={() => setChartMode("cumulative")}
+                      className={`px-2.5 py-1 rounded transition-colors ${chartMode === "cumulative" ? "bg-white text-gray-900 shadow-sm font-medium" : "text-gray-500 hover:text-gray-700"}`}
+                    >
+                      Cumulative
+                    </button>
+                    <button
+                      onClick={() => setChartMode("daily")}
+                      className={`px-2.5 py-1 rounded transition-colors ${chartMode === "daily" ? "bg-white text-gray-900 shadow-sm font-medium" : "text-gray-500 hover:text-gray-700"}`}
+                    >
+                      Daily
+                    </button>
+                  </div>
+                </div>
+                {chartMode === "daily" && barView && (
+                  <div className="w-full" style={{ height: 180, minHeight: 180 }}>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={barView.chartBarData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
+                        <Tooltip content={<BarTooltip episodeTitles={episodeTitles} />} cursor={{ fill: "#f3f4f6" }} />
+                        <CartesianGrid stroke="#e5e7eb" vertical={false} />
+                        <XAxis
+                          type="number"
+                          dataKey="dayIndex"
+                          domain={[1, barView.totalDays]}
+                          ticks={barView.monthTicks}
+                          tickFormatter={(v) => barView.monthLabelByTick.get(Number(v)) || ""}
+                          tick={{ fill: "#374151", fontSize: 12 }}
+                          axisLine={{ stroke: "#111827" }}
+                          tickLine={{ stroke: "#111827" }}
+                        />
+                        <YAxis
+                          width={28}
+                          axisLine={false}
+                          fontSize={12}
+                          tickFormatter={fmtY}
+                          ticks={barView.yTicksBar}
+                          domain={[0, barView.yMaxBar]}
+                          tick={{ fill: "#374151" }}
+                          tickLine={false}
+                        />
+                        <Bar dataKey="minBar" stackId="a" fill="#e5e7eb" isAnimationActive={false} />
+                        <Bar dataKey="repeated" stackId="a" fill="#d1d5db" isAnimationActive={false} />
+                        <Bar dataKey="new" stackId="a" fill="#22c55e" isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                {chartMode === "cumulative" && barView && (
+                  <div className="w-full" style={{ height: 180, minHeight: 180 }}>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={barView.cumulBarData} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
+                        <Tooltip content={<BarTooltip episodeTitles={episodeTitles} />} cursor={{ fill: "#f3f4f6" }} />
+                        <CartesianGrid stroke="#e5e7eb" vertical={false} />
+                        <XAxis
+                          type="number"
+                          dataKey="dayIndex"
+                          domain={[1, barView.totalDays]}
+                          ticks={barView.monthTicks}
+                          tickFormatter={(v) => barView.monthLabelByTick.get(Number(v)) || ""}
+                          tick={{ fill: "#374151", fontSize: 12 }}
+                          axisLine={{ stroke: "#111827" }}
+                          tickLine={{ stroke: "#111827" }}
+                        />
+                        <YAxis
+                          width={28}
+                          axisLine={false}
+                          fontSize={12}
+                          tickFormatter={fmtY}
+                          ticks={view.yTicks}
+                          domain={[0, view.yMax]}
+                          tick={{ fill: "#374151" }}
+                          tickLine={false}
+                        />
+                        <Bar dataKey="minBar" stackId="a" fill="#e5e7eb" isAnimationActive={false} />
+                        <Bar dataKey="known" stackId="a" fill="#d1d5db" isAnimationActive={false} />
+                        <Bar dataKey="new" stackId="a" fill="#22c55e" isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </>
             )}
             {view2 && (
               <>
                 <div className="text-sm font-medium text-gray-700 px-2">Added words / Mastered</div>
-                <div className="w-full" style={{ height: 240, minHeight: 240 }}>
-                  <ResponsiveContainer width="100%" height={240}>
+                <div className="w-full" style={{ height: 180, minHeight: 180 }}>
+                  <ResponsiveContainer width="100%" height={180}>
                     <LineChart data={view2.chartData2} margin={{ top: 6, right: 6, left: 0, bottom: 8 }}>
                       <defs>
                         <linearGradient id="addedWordsGrad" x1="0" y1="0" x2="1" y2="0">

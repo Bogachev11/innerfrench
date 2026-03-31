@@ -162,8 +162,8 @@ export default function DashboardPage() {
     for (const s of sessionsSorted) {
       const ep = byEpisodeId.get(s.episode_id);
       if (!ep?.number) continue;
-      const durMs = Math.max(1, (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000);
-      const ratio = Math.min(1, (s.end_position_ms || 0) / durMs);
+      const durMs = (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000;
+      const ratio = durMs > 0 ? Math.min(1, (s.end_position_ms || 0) / durMs) : 0;
       const day = dayKey(s.started_at);
       const at = new Date(s.started_at).getTime();
       const prev = sessionTimeline.get(ep.number);
@@ -188,8 +188,8 @@ export default function DashboardPage() {
       if (!ep?.number) continue;
       episodesWithProgress.add(ep.number);
 
-      const durMs = Math.max(1, (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000);
-      const progressRatio = Math.min(1, (p.last_position_ms || 0) / durMs);
+      const durMs = (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000;
+      const progressRatio = durMs > 0 ? Math.min(1, (p.last_position_ms || 0) / durMs) : 0;
       const sessionInfo = sessionTimeline.get(ep.number);
 
       const stateCompleted = !!p.completed;
@@ -246,7 +246,7 @@ export default function DashboardPage() {
             </div>
 
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-gray-700">Days and Episodes</h2>
+              {/* section title removed */}
               <div className="space-y-4">
                 {model.months.map((month) => (
                   <div key={month.key} className="space-y-0">
@@ -414,7 +414,10 @@ function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] 
   const out: MonthView[] = [];
 
   let cursor = START_KEY.slice(0, 7);
-  const endMonth = dayKey(new Date()).slice(0, 7);
+  // Show current month + next month (empty preview)
+  const now = new Date();
+  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const endMonth = `${nextM.getUTCFullYear()}-${String(nextM.getUTCMonth() + 1).padStart(2, "0")}`;
   while (cursor <= endMonth) {
     const [yy, mm] = cursor.split("-").map(Number);
     const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
@@ -469,13 +472,13 @@ function MonthAxis({ dayKeys }: { dayKeys: string[] }) {
   if (dayKeys.length === 0) return null;
   const dayNums = dayKeys.map((k) => Number(k.slice(8, 10)));
   const first = dayNums[0];
-  const hasDay31 = dayNums.includes(31);
+  const lastDay = dayNums[dayNums.length - 1];
 
   return (
     <div className="relative h-7">
       <div className="absolute left-0 right-0 top-0 border-t border-black" />
       {dayNums.map((day, idx) => {
-        const isLabel = day === first || day === 10 || day === 20 || (hasDay31 && day === 31);
+        const isLabel = day === first || day === 10 || day === 20 || day === lastDay;
         if (!isLabel) return null;
         const pct = ((idx + 0.5) / dayNums.length) * 100;
         const style = { left: `${pct}%`, transform: "translateX(-50%)" };

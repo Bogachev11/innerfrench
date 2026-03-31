@@ -2,14 +2,18 @@
   "name": "french-podcast-tool",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": "22.x" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
-    "dev": "next dev --turbopack -p 3010",
+    "dev": "node scripts/dev-with-env.cjs -p 4399",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "node scripts/run-e2e.cjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.0",
     "@supabase/supabase-js": "^2",
     "next": "^15",
     "node-lefff": "^0.3.1",
@@ -20,6 +24,7 @@
     "recharts": "^3.8.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",
