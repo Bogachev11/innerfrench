@@ -103,12 +103,24 @@ async function main() {
   const allSegs = pages.flat();
   console.log(`  Got ${allSegs.length} segments`);
 
-  // Group by episode
+  // Group by episode, deduplicate segments by text (import bug in some episodes)
   const segsByEp = new Map();
   for (const s of allSegs) {
     if (!segsByEp.has(s.episode_id)) segsByEp.set(s.episode_id, []);
     segsByEp.get(s.episode_id).push(s);
   }
+  let totalDupes = 0;
+  for (const [epId, segs] of segsByEp) {
+    const seen = new Set();
+    const deduped = segs.filter(s => {
+      const key = (s.fr_text || "").trim();
+      if (key.length > 20 && seen.has(key)) { totalDupes++; return false; }
+      seen.add(key);
+      return true;
+    });
+    segsByEp.set(epId, deduped);
+  }
+  if (totalDupes > 0) console.log(`  Removed ${totalDupes} duplicate segments`);
 
   // Build proper noun set from ALL text
   console.log("Detecting proper nouns...");

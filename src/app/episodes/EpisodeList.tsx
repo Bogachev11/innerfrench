@@ -227,6 +227,7 @@ function EpisodeStatsCard({
                       points={cardStats.sparkline.map((s) => s.totalWords)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#6b7280"
+                      bars
                     />
                     <MiniChart
                       label="lemmas"
@@ -234,6 +235,7 @@ function EpisodeStatsCard({
                       points={cardStats.sparkline.map((s) => s.uniqueForms)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#f59e0b"
+                      bars
                     />
                     <MiniChart
                       label="new"
@@ -241,6 +243,7 @@ function EpisodeStatsCard({
                       points={cardStats.sparkline.map((s) => s.newForms)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#10b981"
+                      bars
                     />
                     <MiniChart
                       label="w/min"
@@ -266,15 +269,16 @@ function EpisodeStatsCard({
   );
 }
 
-function MiniChart({ label, value, points, currentIdx, color }: {
+function MiniChart({ label, value, points, currentIdx, color, bars = false }: {
   label: string;
   value: string;
   points: number[];
   currentIdx: number;
   color: string;
+  bars?: boolean;
 }) {
   const H = 56;
-  const PAD = 3;
+  const PAD = 2;
   const VW = 300;
 
   const fmt = (v: number) =>
@@ -285,12 +289,17 @@ function MiniChart({ label, value, points, currentIdx, color }: {
 
   const max = Math.max(...points);
   const min = Math.min(...points);
-  const range = max - min || 1;
+  const range = max || 1;           // bars always from zero
+  const lineRange = max - min || 1; // line uses min–max
   const n = points.length;
+
+  // bar width + gap: fill full VW
+  const gap = Math.max(1, VW / n * 0.15);
+  const barW = VW / n - gap;
 
   const coords = points.map((v, i) => ({
     x: (i / (n - 1)) * VW,
-    y: PAD + ((max - v) / range) * (H - PAD * 2),
+    y: PAD + ((max - v) / lineRange) * (H - PAD * 2),
   }));
   const pts = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
   const cur = currentIdx >= 0 && currentIdx < coords.length ? coords[currentIdx] : null;
@@ -304,7 +313,7 @@ function MiniChart({ label, value, points, currentIdx, color }: {
       <div className="flex items-stretch gap-1.5">
         <div className="flex flex-col justify-between text-[9px] tabular-nums text-gray-400 leading-none shrink-0 w-6 text-right py-px">
           <span>{fmt(max)}</span>
-          <span>{fmt(min)}</span>
+          <span>{bars ? "0" : fmt(min)}</span>
         </div>
         <div className="flex-1 min-w-0">
           <svg
@@ -314,22 +323,43 @@ function MiniChart({ label, value, points, currentIdx, color }: {
             preserveAspectRatio="none"
             className="overflow-visible block"
           >
-            <polyline
-              points={pts}
-              fill="none"
-              stroke={color}
-              strokeWidth="2.5"
-              strokeOpacity="0.65"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-              vectorEffect="non-scaling-stroke"
-            />
-            {cur && (
-              <circle
-                cx={cur.x} cy={cur.y} r="5"
-                fill={color} stroke="white" strokeWidth="2"
-                vectorEffect="non-scaling-stroke"
-              />
+            {bars ? (
+              points.map((v, i) => {
+                const bh = Math.max((v / range) * H, 1);
+                const x = i * (VW / n) + gap / 2;
+                const isCur = i === currentIdx;
+                return (
+                  <rect
+                    key={i}
+                    x={x.toFixed(1)}
+                    y={(H - bh).toFixed(1)}
+                    width={barW.toFixed(1)}
+                    height={bh.toFixed(1)}
+                    fill={color}
+                    fillOpacity={isCur ? 0.9 : 0.35}
+                  />
+                );
+              })
+            ) : (
+              <>
+                <polyline
+                  points={pts}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth="2.5"
+                  strokeOpacity="0.65"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {cur && (
+                  <circle
+                    cx={cur.x} cy={cur.y} r="3"
+                    fill={color}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
+              </>
             )}
           </svg>
         </div>
