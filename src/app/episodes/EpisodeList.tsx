@@ -250,12 +250,6 @@ function EpisodeStatsCard({
                       color="#8b5cf6"
                     />
                   </div>
-                  {cardStats.segmentSpeeds.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[11px] text-gray-500">Speed across episode (ch/min)</div>
-                      <SegmentSpeedChart speeds={cardStats.segmentSpeeds} />
-                    </div>
-                  )}
                 </>
               )}
               <Link
@@ -297,7 +291,7 @@ function Sparkline({ values, currentIdx, color }: {
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = max - min || 1;
-  const W = 52, H = 18;
+  const W = 72, H = 28;
   const coords = values.map((v, i) => ({
     x: (i / (values.length - 1)) * W,
     y: H - ((v - min) / range) * (H - 3) - 1.5,
