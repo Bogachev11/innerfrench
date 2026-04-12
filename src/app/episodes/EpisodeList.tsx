@@ -220,29 +220,29 @@ function EpisodeStatsCard({
             <>
               {cardStats.ep && cardStats.ep.totalWords >= 200 && (
                 <>
-                  <div className="grid grid-cols-4 gap-2">
-                    <KpiWithSpark
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                    <MiniChart
                       label="words"
                       value={cardStats.ep.totalWords.toLocaleString("en")}
                       points={cardStats.sparkline.map((s) => s.totalWords)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#6b7280"
                     />
-                    <KpiWithSpark
+                    <MiniChart
                       label="lemmas"
                       value={cardStats.ep.uniqueForms.toLocaleString("en")}
                       points={cardStats.sparkline.map((s) => s.uniqueForms)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#f59e0b"
                     />
-                    <KpiWithSpark
+                    <MiniChart
                       label="new"
                       value={String(cardStats.ep.newForms)}
                       points={cardStats.sparkline.map((s) => s.newForms)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
                       color="#10b981"
                     />
-                    <KpiWithSpark
+                    <MiniChart
                       label="w/min"
                       value={cardStats.ep.wordsPerMin != null ? String(cardStats.ep.wordsPerMin) : "—"}
                       points={cardStats.sparkline.map((s) => s.wordsPerMin ?? 0)}
@@ -266,66 +266,74 @@ function EpisodeStatsCard({
   );
 }
 
-function KpiWithSpark({ label, value, points, currentIdx, color }: {
+function MiniChart({ label, value, points, currentIdx, color }: {
   label: string;
   value: string;
   points: number[];
   currentIdx: number;
   color: string;
 }) {
-  return (
-    <div className="text-center">
-      <div className="text-base font-bold tabular-nums text-gray-800">{value}</div>
-      <div className="text-[10px] text-gray-400 leading-tight mb-1">{label}</div>
-      <Sparkline values={points} currentIdx={currentIdx} color={color} />
-    </div>
-  );
-}
+  const H = 56;
+  const PAD = 3;
+  const VW = 300;
 
-function Sparkline({ values, currentIdx, color }: {
-  values: number[];
-  currentIdx: number;
-  color: string;
-}) {
-  if (values.length < 2) return <div className="h-4" />;
-  const max = Math.max(...values);
-  const min = Math.min(...values);
+  const fmt = (v: number) =>
+    v >= 10000 ? `${Math.round(v / 1000)}k` :
+    v >= 1000  ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v));
+
+  if (points.length < 2) return null;
+
+  const max = Math.max(...points);
+  const min = Math.min(...points);
   const range = max - min || 1;
-  const W = 72, H = 28;
-  const coords = values.map((v, i) => ({
-    x: (i / (values.length - 1)) * W,
-    y: H - ((v - min) / range) * (H - 3) - 1.5,
+  const n = points.length;
+
+  const coords = points.map((v, i) => ({
+    x: (i / (n - 1)) * VW,
+    y: PAD + ((max - v) / range) * (H - PAD * 2),
   }));
   const pts = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
-  const cur = currentIdx >= 0 ? coords[currentIdx] : null;
+  const cur = currentIdx >= 0 && currentIdx < coords.length ? coords[currentIdx] : null;
 
   return (
-    <svg width={W} height={H} className="overflow-visible mx-auto block">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.2"
-        strokeOpacity="0.5" strokeLinejoin="round" strokeLinecap="round" />
-      {cur && (
-        <circle cx={cur.x} cy={cur.y} r="2.5" fill={color} stroke="white" strokeWidth="1" />
-      )}
-    </svg>
-  );
-}
-
-function SegmentSpeedChart({ speeds }: { speeds: number[] }) {
-  const max = Math.max(...speeds);
-  const min = Math.min(...speeds, 0);
-  const range = max - min || 1;
-  return (
-    <div className="flex items-end gap-px h-8">
-      {speeds.map((v, i) => (
-        <div
-          key={i}
-          className="flex-1 rounded-sm"
-          style={{
-            height: `${Math.max(((v - min) / range) * 100, 4)}%`,
-            backgroundColor: `hsl(${210 + ((v - min) / range) * 60}, 70%, 55%)`,
-          }}
-        />
-      ))}
+    <div>
+      <div className="flex justify-between items-baseline mb-1">
+        <span className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
+        <span className="text-sm font-bold tabular-nums text-gray-800">{value}</span>
+      </div>
+      <div className="flex items-stretch gap-1.5">
+        <div className="flex flex-col justify-between text-[9px] tabular-nums text-gray-400 leading-none shrink-0 w-6 text-right py-px">
+          <span>{fmt(max)}</span>
+          <span>{fmt(min)}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <svg
+            viewBox={`0 0 ${VW} ${H}`}
+            width="100%"
+            height={H}
+            preserveAspectRatio="none"
+            className="overflow-visible block"
+          >
+            <polyline
+              points={pts}
+              fill="none"
+              stroke={color}
+              strokeWidth="2.5"
+              strokeOpacity="0.65"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            {cur && (
+              <circle
+                cx={cur.x} cy={cur.y} r="5"
+                fill={color} stroke="white" strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </svg>
+        </div>
+      </div>
     </div>
   );
 }
