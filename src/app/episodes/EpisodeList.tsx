@@ -16,8 +16,8 @@ interface Progress {
 // Per-episode pre-computed stats (cached)
 interface EpStats {
   totalWords: number;
-  uniqueForms: number;
-  newForms: number;        // forms not seen in any episode 1..N-1
+  uniqueForms: number;     // unique lemmas (French only)
+  newForms: number;        // new lemmas not seen in any episode 1..N-1
   wordsPerMin: number | null;
   segmentSpeeds: number[]; // bucketed ch/min for speed chart
 }
@@ -229,7 +229,7 @@ function EpisodeStatsCard({
                       color="#6b7280"
                     />
                     <KpiWithSpark
-                      label="forms"
+                      label="lemmas"
                       value={cardStats.ep.uniqueForms.toLocaleString("en")}
                       points={cardStats.sparkline.map((s) => s.uniqueForms)}
                       currentIdx={cardStats.sparkline.findIndex((s) => s.isCurrent)}
