@@ -18,8 +18,9 @@ interface EpisodeProgressView {
 
 interface DayEpisode {
   number: number;
-  ratio: number;
-  completed: boolean;
+  fromRatio: number;
+  toRatio: number;
+  completedToday: boolean;
 }
 
 interface DayView {
@@ -38,6 +39,7 @@ interface DashboardModel {
   completedCount: number;
   avgMinutesPerDay: number;
   streakDays: number;
+  streakBroken: boolean;
   months: MonthView[];
   episodeGrid: EpisodeProgressView[];
 }
@@ -106,7 +108,7 @@ export default function DashboardPage() {
     const totalMinutes = Math.round(totalListenedMs / 60000);
     const completedCount = progress.filter((p) => p.completed).length;
     const avgMinutesPerDay = Math.round(totalMinutes / daysSinceStart());
-    const streakDays = computeStreakDays(sessions);
+    const streakInfo = computeStreakDays(sessions);
 
     const startedNumbers = new Set<number>();
     const lastSessionPosByNumber = new Map<number, number>();
@@ -149,13 +151,15 @@ export default function DashboardPage() {
       };
     }
 
-    // Timeline uses only the latest relevant state per episode:
-    // - not completed: one yellow square on latest state day
-    // - completed: one green square on completion day (yellow disappears)
-    const sessionTimeline = new Map<
-      number,
-      { latestDay: string; latestRatio: number; completionDay?: string; latestAt: number }
-    >();
+    // Timeline shows first-time listening per day (re-listens excluded).
+    // Each day's square paints:
+    //   [0, fromRatio]      — already-heard portion (from earlier days), warn gradient
+    //   [fromRatio, 1]      — green, if the episode was completed on this day
+    //   [fromRatio, toRatio]— warn gradient, if just advanced (not yet completed)
+    type DaySegment = { fromRatio: number; toRatio: number; completedToday: boolean };
+    const epDayMap = new Map<number, Map<string, DaySegment>>();
+    const epFrontier = new Map<number, number>();
+
     const sessionsSorted = [...sessions].sort(
       (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
     );
@@ -163,60 +167,71 @@ export default function DashboardPage() {
       const ep = byEpisodeId.get(s.episode_id);
       if (!ep?.number) continue;
       const durMs = (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000;
-      const ratio = durMs > 0 ? Math.min(1, (s.end_position_ms || 0) / durMs) : 0;
+      if (durMs <= 0) continue;
+      const endRatio = Math.min(1, (s.end_position_ms || 0) / durMs);
+      const prev = epFrontier.get(ep.number) ?? 0;
+      if (endRatio <= prev) continue;
+
       const day = dayKey(s.started_at);
-      const at = new Date(s.started_at).getTime();
-      const prev = sessionTimeline.get(ep.number);
-      if (!prev || at >= prev.latestAt) {
-        sessionTimeline.set(ep.number, {
-          latestDay: day,
-          latestRatio: ratio,
-          completionDay: prev?.completionDay,
-          latestAt: at,
-        });
+      let segs = epDayMap.get(ep.number);
+      if (!segs) {
+        segs = new Map();
+        epDayMap.set(ep.number, segs);
       }
-      const cur = sessionTimeline.get(ep.number)!;
-      if (!cur.completionDay && ratio >= 0.95) {
-        cur.completionDay = day;
+      const completedNow = endRatio >= 0.95;
+      const existing = segs.get(day);
+      if (existing) {
+        existing.toRatio = Math.max(existing.toRatio, endRatio);
+        if (completedNow) existing.completedToday = true;
+      } else {
+        segs.set(day, { fromRatio: prev, toRatio: endRatio, completedToday: completedNow });
       }
+      epFrontier.set(ep.number, endRatio);
+    }
+
+    // If progress.completed=true but no session reached the completion threshold,
+    // mark completion on progress.updated_at day.
+    for (const p of progress) {
+      if (!p.completed) continue;
+      const ep = byEpisodeId.get(p.episode_id);
+      if (!ep?.number) continue;
+
+      let segs = epDayMap.get(ep.number);
+      let alreadyCompleted = false;
+      if (segs) {
+        for (const seg of segs.values()) {
+          if (seg.completedToday) { alreadyCompleted = true; break; }
+        }
+      }
+      if (alreadyCompleted) continue;
+
+      const day = dayKey(p.updated_at || new Date());
+      const frontier = epFrontier.get(ep.number) ?? 0;
+      if (!segs) {
+        segs = new Map();
+        epDayMap.set(ep.number, segs);
+      }
+      const existing = segs.get(day);
+      if (existing) {
+        existing.completedToday = true;
+        existing.toRatio = 1;
+      } else {
+        segs.set(day, { fromRatio: frontier, toRatio: 1, completedToday: true });
+      }
+      epFrontier.set(ep.number, 1);
     }
 
     const dayMap = new Map<string, Map<number, DayEpisode>>();
-    const episodesWithProgress = new Set<number>();
-    for (const p of progress) {
-      const ep = byEpisodeId.get(p.episode_id);
-      if (!ep?.number) continue;
-      episodesWithProgress.add(ep.number);
-
-      const durMs = (byNumber.get(ep.number)?.duration_sec ?? 0) * 1000;
-      const progressRatio = durMs > 0 ? Math.min(1, (p.last_position_ms || 0) / durMs) : 0;
-      const sessionInfo = sessionTimeline.get(ep.number);
-
-      const stateCompleted = !!p.completed;
-      const stateDay = stateCompleted
-        ? (sessionInfo?.completionDay || dayKey(p.updated_at || new Date()))
-        : dayKey(p.updated_at || sessionInfo?.latestDay || new Date());
-      const stateRatio = stateCompleted ? 1 : progressRatio || sessionInfo?.latestRatio || 0;
-
-      if (!dayMap.has(stateDay)) dayMap.set(stateDay, new Map());
-      dayMap.get(stateDay)!.set(ep.number, {
-        number: ep.number,
-        ratio: stateRatio,
-        completed: stateCompleted,
-      });
-    }
-
-    // Fallback for episodes with sessions but missing progress rows.
-    for (const [epNumber, info] of sessionTimeline.entries()) {
-      if (episodesWithProgress.has(epNumber)) continue;
-      const completed = !!info.completionDay
-      const key = completed ? info.completionDay! : info.latestDay;
-      if (!dayMap.has(key)) dayMap.set(key, new Map());
-      dayMap.get(key)!.set(epNumber, {
-        number: epNumber,
-        ratio: completed ? 1 : info.latestRatio,
-        completed,
-      });
+    for (const [epNumber, segs] of epDayMap.entries()) {
+      for (const [day, seg] of segs.entries()) {
+        if (!dayMap.has(day)) dayMap.set(day, new Map());
+        dayMap.get(day)!.set(epNumber, {
+          number: epNumber,
+          fromRatio: seg.fromRatio,
+          toRatio: seg.toRatio,
+          completedToday: seg.completedToday,
+        });
+      }
     }
 
     const months = buildMonths(dayMap);
@@ -225,7 +240,8 @@ export default function DashboardPage() {
       totalMinutes,
       completedCount,
       avgMinutesPerDay,
-      streakDays,
+      streakDays: streakInfo.days,
+      streakBroken: streakInfo.broken,
       months,
       episodeGrid,
     });
@@ -242,7 +258,7 @@ export default function DashboardPage() {
               <Card label="Total Minutes" value={String(model.totalMinutes)} />
               <CompletedCard completed={model.completedCount} total={TOTAL_EPISODES} />
               <Card label="Average / Day" value={String(model.avgMinutesPerDay)} />
-              <Card label="Streak" value={`⚡ ${model.streakDays}`} />
+              <Card label="Streak" value={model.streakBroken ? "🤷‍♂️" : `⚡ ${model.streakDays}`} />
             </div>
 
             <section>
@@ -263,7 +279,9 @@ export default function DashboardPage() {
                             {Array.from({ length: 4 }).map((_, i) => {
                               const shown = [...day.episodes]
                                 .sort((a, b) => {
-                                  if (a.completed !== b.completed) return Number(a.completed) - Number(b.completed);
+                                  if (a.completedToday !== b.completedToday) {
+                                    return Number(a.completedToday) - Number(b.completedToday);
+                                  }
                                   return a.number - b.number;
                                 })
                                 .slice(0, 4);
@@ -271,13 +289,12 @@ export default function DashboardPage() {
                               const ep = i < startRow ? undefined : shown[i - startRow];
                               if (!ep) return <div key={`${day.key}_empty_${i}`} />;
                               return (
-                                <MiniSquare
+                                <DaySquare
                                   key={`${day.key}_${ep.number}`}
-                                  ratio={ep.ratio}
-                                  completed={ep.completed}
-                                  started={true}
+                                  fromRatio={ep.fromRatio}
+                                  toRatio={ep.toRatio}
+                                  completedToday={ep.completedToday}
                                   number={ep.number}
-                                  size="xs"
                                 />
                               );
                             })}
@@ -286,7 +303,7 @@ export default function DashboardPage() {
                       ))}
                     </div>
                     <div className="mt-[2px]">
-                      <MonthAxis dayKeys={month.days.map((d) => d.key)} />
+                      <MonthAxis dayKeys={month.days.map((d) => d.key)} todayKey={dayKey(new Date())} />
                     </div>
                   </div>
                   );
@@ -377,7 +394,7 @@ function daysSinceStart(): number {
 
 function computeStreakDays(
   sessions: Array<{ started_at: string; listened_ms: number | null }>
-): number {
+): { days: number; broken: boolean } {
   const activityByDay = new Map<string, { count: number; ms: number }>();
   for (const s of sessions) {
     const key = dayKey(s.started_at);
@@ -388,17 +405,25 @@ function computeStreakDays(
     });
   }
 
-  // Treat any day with at least one session row as active.
-  // Some historical rows may have listened_ms=0 but still mean real listening happened.
   const activeDays = [...activityByDay.entries()]
     .filter(([, v]) => v.count > 0)
     .map(([key]) => key)
     .sort();
-  if (activeDays.length === 0) return 0;
+  if (activeDays.length === 0) return { days: 0, broken: true };
 
-  // Streak ends on the latest active day (not necessarily today).
+  const todayKey = dayKey(new Date());
+  const yesterdayMs = keyToUtcMs(todayKey) - 86400000;
+  const yesterdayDate = new Date(yesterdayMs);
+  const yesterdayKey = `${yesterdayDate.getUTCFullYear()}-${String(yesterdayDate.getUTCMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getUTCDate()).padStart(2, "0")}`;
+
+  const latest = activeDays[activeDays.length - 1];
+  // Streak is "alive" only if the latest activity is today or yesterday.
+  if (latest !== todayKey && latest !== yesterdayKey) {
+    return { days: 0, broken: true };
+  }
+
   let streak = 1;
-  let cursor = activeDays[activeDays.length - 1];
+  let cursor = latest;
   const activeSet = new Set(activeDays);
 
   while (true) {
@@ -410,7 +435,7 @@ function computeStreakDays(
     cursor = prevKey;
   }
 
-  return streak;
+  return { days: streak, broken: false };
 }
 
 function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] {
@@ -471,17 +496,30 @@ function CompletedCard({ completed, total }: { completed: number; total: number 
   );
 }
 
-function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots?: number }) {
+function MonthAxis({
+  dayKeys,
+  todayKey,
+  totalSlots = 31,
+}: {
+  dayKeys: string[];
+  todayKey?: string;
+  totalSlots?: number;
+}) {
   if (dayKeys.length === 0) return null;
   const dayNums = dayKeys.map((k) => Number(k.slice(8, 10)));
   const first = dayNums[0];
   const lastDay = dayNums[dayNums.length - 1];
+  const todayIdx = todayKey ? dayKeys.indexOf(todayKey) : -1;
+  const NEAR = 3;
 
   return (
     <div className="relative h-5">
       <div className="absolute top-0 border-t border-black" style={{ left: 0, width: `${(dayNums.length / totalSlots) * 100}%` }} />
       {dayNums.map((day, idx) => {
-        const isLabel = day === first || day === 10 || day === 20 || day === lastDay;
+        const isToday = idx === todayIdx;
+        const isAnchor = day === first || day === 10 || day === 20 || day === lastDay;
+        const nearToday = todayIdx >= 0 && idx !== todayIdx && Math.abs(idx - todayIdx) <= NEAR;
+        const isLabel = isToday || (isAnchor && !nearToday);
         if (!isLabel) return null;
         const pct = ((idx + 0.5) / totalSlots) * 100;
         const style = { left: `${pct}%`, transform: "translateX(-50%)" };
@@ -492,10 +530,49 @@ function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots
             style={style}
           >
             <div className="w-px h-1 bg-black mx-auto" />
-            <div className="text-[11px] leading-none text-gray-700 mt-0">{day}</div>
+            <div className={`text-[11px] leading-none mt-0 ${isToday ? "font-bold text-black" : "text-gray-700"}`}>{day}</div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function DaySquare({
+  fromRatio,
+  toRatio,
+  completedToday,
+  number,
+}: {
+  fromRatio: number;
+  toRatio: number;
+  completedToday: boolean;
+  number: number;
+}) {
+  const from = Math.max(0, Math.min(1, fromRatio));
+  const to = Math.max(from, Math.min(1, toRatio));
+  const fullyPainted = completedToday && from === 0;
+  const textColor = fullyPainted ? "text-white" : "text-gray-700";
+  const borderClass = fullyPainted ? "" : "ring-1 ring-inset ring-gray-300";
+
+  return (
+    <div className={`w-full aspect-square rounded-[2px] relative overflow-hidden ${borderClass}`}>
+      {completedToday ? (
+        <div
+          className="absolute top-0 bottom-0 bg-progress-done"
+          style={{ left: `${from * 100}%`, right: 0 }}
+        />
+      ) : (
+        to > 0 && (
+          <div
+            className="absolute left-0 top-0 bottom-0 bg-progress-warn"
+            style={{ width: `${to * 100}%` }}
+          />
+        )
+      )}
+      <div className={`absolute inset-0 ${textColor} text-[6px] leading-none flex items-center justify-center font-medium`}>
+        {number}
+      </div>
     </div>
   );
 }
