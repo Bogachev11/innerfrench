@@ -56,25 +56,25 @@ async function parseEpisode(
   await page.goto(url, { waitUntil: "load", timeout: 45000 });
   const finalUrl = page.url();
   console.log(`  Landed on: ${finalUrl}`);
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
 
-  // Wait for dynamic transcript content to render
+  // Open transcript: click "Lire la transcription" then "Voir plus" if present
+  const transLink = await page.locator('a[href*="#transcription"], a:has-text("transcription")').first();
+  if (await transLink.count() > 0) {
+    await transLink.click();
+    await page.waitForTimeout(1500);
+  }
+  const voirPlus = page.locator('text=Voir plus, button:has-text("Voir plus"), a:has-text("Voir plus"), [class*="show-more"]');
+  if (await voirPlus.count() > 0) {
+    await voirPlus.first().click();
+    await page.waitForTimeout(2000);
+  }
+
   try {
-    await page.waitForSelector("a.srmp3_sonaar_ts_shortcode", { timeout: 15000 });
+    await page.waitForSelector("a.srmp3_sonaar_ts_shortcode", { timeout: 10000 });
     console.log("  Found timestamp anchors");
   } catch {
-    console.log("  No timestamp anchors after wait, checking innerHTML...");
-    const hasTimecodes = await page.evaluate(() => {
-      const html = document.body.innerHTML;
-      const match = html.match(/srmp3_sonaar_ts_shortcode/);
-      const dynamicHtml = document.querySelector('.kb-dynamic-html');
-      return {
-        hasClass: !!match,
-        dynamicHtml: dynamicHtml ? dynamicHtml.innerHTML.substring(0, 300) : "not found",
-        showMore: document.querySelector('.kb-block-show-more-container')?.innerHTML?.substring(0, 300) || "not found",
-      };
-    });
-    console.log("  Debug:", JSON.stringify(hasTimecodes, null, 2));
+    console.log("  No timestamp anchors, will try fallback regex on body");
   }
 
   const data = await page.evaluate(() => {
@@ -90,11 +90,9 @@ async function parseEpisode(
     const pageTitle = h1?.textContent?.trim() || "";
 
     // Transcript: sonaar timestamp anchors + text
-    // Two formats:
-    //   New (ep 190+): <a>[time]</a> <p>text</p> <a>[time]</a> <p>text</p>
-    //   Old (ep 1-~90): <p><a>[time]</a> text <a>[time]</a> text</p>
+    // Formats: a.srmp3_sonaar_ts_shortcode (new) OR fallback: regex on #transcription section (old ep 14 etc.)
     const anchors = document.querySelectorAll("a.srmp3_sonaar_ts_shortcode");
-    const segments: { time: string; text: string }[] = [];
+    let segments: { time: string; text: string }[] = [];
 
     for (let ai = 0; ai < anchors.length; ai++) {
       const a = anchors[ai];
@@ -102,8 +100,6 @@ async function parseEpisode(
       if (!timeMatch) continue;
 
       const texts: string[] = [];
-
-      // Format 1: text in sibling <p> elements (new format)
       let el = a.nextElementSibling;
       while (el) {
         if (el.classList.contains("srmp3_sonaar_ts_shortcode")) break;
@@ -113,8 +109,6 @@ async function parseEpisode(
         }
         el = el.nextElementSibling;
       }
-
-      // Format 2: text in text nodes after <a> within same <p> (old format)
       if (texts.length === 0) {
         let node: Node | null = a.nextSibling;
         let txt = "";
@@ -131,9 +125,36 @@ async function parseEpisode(
         txt = txt.trim();
         if (txt) texts.push(txt);
       }
-
       if (texts.length > 0) {
         segments.push({ time: timeMatch[1], text: texts.join("\n") });
+      }
+    }
+
+    // Fallback: any element with [HH:MM:SS] (e.g. old ep 14 — links without class or transcript in body)
+    if (segments.length === 0) {
+      const allLinks = document.querySelectorAll('a[href*="sonaar"], a[href*="time"]');
+      for (const a of allLinks) {
+        const timeMatch = a.textContent?.match(/\[(\d{2}:\d{2}:\d{2})\]/);
+        if (!timeMatch) continue;
+        let text = "";
+        let node: Node | null = a.nextSibling;
+        while (node) {
+          if (node.nodeType === Node.ELEMENT_NODE && (node as Element).querySelector?.("a[href*='sonaar'], a[href*='time']")) break;
+          if (node.nodeType === Node.TEXT_NODE) text += node.textContent || "";
+          if (node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName !== "A") text += (node as Element).textContent || "";
+          node = node.nextSibling;
+        }
+        text = text.replace(/\s+/g, " ").trim();
+        if (text.length > 3) segments.push({ time: timeMatch[1], text });
+      }
+    }
+    if (segments.length === 0) {
+      const raw = document.body.innerText || document.body.textContent || "";
+      const timeRegex = /\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*?)(?=\[\d{2}:\d{2}:\d{2}\]|$)/g;
+      let m: RegExpExecArray | null;
+      while ((m = timeRegex.exec(raw)) !== null) {
+        const text = m[2].replace(/\s+/g, " ").trim();
+        if (text && text.length > 5) segments.push({ time: m[1], text });
       }
     }
 

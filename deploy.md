@@ -58,6 +58,8 @@ npx tsx scripts/runMigration.ts
 
 ## 4. Импорт эпизодов
 
+**Полная пошаговая процедура (импорт + пуш + перевод):** см. **[IMPORT_EPISODE_PROCEDURE.md](./IMPORT_EPISODE_PROCEDURE.md)** — не пропускать шаг перевода.
+
 ### 4.1. Авторизация на InnerFrench (нужна подписка)
 
 ```bash
@@ -94,10 +96,11 @@ npx tsx scripts/importEpisode.ts
 ### 4.5. Загрузка в Supabase
 
 ```bash
-npx tsx scripts/pushToSupabase.ts
+npx tsx scripts/pushToSupabase.ts [файл]
+# пример: npx tsx scripts/pushToSupabase.ts scripts/data/episodes_14-14.json
 ```
 
-Заливает эпизоды и сегменты в БД.
+Заливает эпизоды и сегменты в БД. **После пуша обязательно запустить перевод** (см. раздел 5 или IMPORT_EPISODE_PROCEDURE.md).
 
 ### 4.6. Ночной батч с возобновлением после ошибок
 

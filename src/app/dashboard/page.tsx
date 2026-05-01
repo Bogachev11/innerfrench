@@ -442,9 +442,10 @@ function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] 
   const out: MonthView[] = [];
 
   let cursor = START_KEY.slice(0, 7);
-  // Show current month + next month (empty preview)
+  // Show next month only after mid-month; otherwise stop at current month
   const now = new Date();
-  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const showNextMonth = now.getUTCDate() >= 15;
+  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + (showNextMonth ? 1 : 0), 1));
   const endMonth = `${nextM.getUTCFullYear()}-${String(nextM.getUTCMonth() + 1).padStart(2, "0")}`;
   while (cursor <= endMonth) {
     const [yy, mm] = cursor.split("-").map(Number);
@@ -522,12 +523,11 @@ function MonthAxis({
         const isLabel = isToday || (isAnchor && !nearToday);
         if (!isLabel) return null;
         const pct = ((idx + 0.5) / totalSlots) * 100;
-        const style = { left: `${pct}%`, transform: "translateX(-50%)" };
         return (
           <div
             key={`${dayKeys[idx]}_tick`}
             className="absolute top-0"
-            style={style}
+            style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
           >
             <div className="w-px h-1 bg-black mx-auto" />
             <div className={`text-[11px] leading-none mt-0 ${isToday ? "font-bold text-black" : "text-gray-700"}`}>{day}</div>

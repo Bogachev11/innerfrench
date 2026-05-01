@@ -733,7 +733,7 @@ function BarTooltip({
           ))}
         </ul>
       ) : (
-        <div className="text-gray-400">Нет эпизодов</div>
+        <div className="text-gray-400">No episodes</div>
       )}
     </div>
   );

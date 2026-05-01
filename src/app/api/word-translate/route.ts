@@ -17,12 +17,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "word is required" }, { status: 400 });
     }
 
-    const prompt = [
-      "Translate one French word to Russian using sentence context.",
-      "Return strict JSON with keys: translation, lemma, short_note.",
-      `word: ${word}`,
-      `context: ${contextFr}`,
-    ].join("\n");
+    const prompt = `FR: "${word}" | context: ${contextFr.slice(0, 200)}
+JSON: translation, lemma, short_note (optional), translation_2, translation_3 (1-2 other meanings, optional)`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -35,11 +31,7 @@ export async function POST(req: Request) {
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content:
-              "You are a concise French-Russian lexical assistant. Keep output short and literal.",
-          },
+          { role: "system", content: "French→Russian. One phrase. JSON only. Short." },
           { role: "user", content: prompt },
         ],
       }),
@@ -66,6 +58,8 @@ export async function POST(req: Request) {
       translation: String(parsed.translation ?? "").trim(),
       lemma: String(parsed.lemma ?? word).trim(),
       short_note: String(parsed.short_note ?? "").trim(),
+      translation_2: parsed.translation_2 ? String(parsed.translation_2).trim() : undefined,
+      translation_3: parsed.translation_3 ? String(parsed.translation_3).trim() : undefined,
     });
   } catch (error) {
     return NextResponse.json(

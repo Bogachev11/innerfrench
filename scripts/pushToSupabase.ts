@@ -112,7 +112,8 @@ async function main() {
     process.exit(1);
   }
 
-  const episodes: EpisodeData[] = JSON.parse(fs.readFileSync(file, "utf-8"));
+  let episodes: EpisodeData[] = JSON.parse(fs.readFileSync(file, "utf-8"));
+  if (!Array.isArray(episodes)) episodes = [episodes];
   console.log(`Pushing ${episodes.length} episodes to Supabase...\n`);
 
   const ok = await ensureSchema();
