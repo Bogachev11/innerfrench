@@ -133,6 +133,7 @@ export default function VocabPage() {
   const [infoByCanonical, setInfoByCanonical] = useState<Record<string, WordInfo>>({});
   const [reviewEvents, setReviewEvents] = useState<Array<{ canonical_key: string; reviewed_at: string; correct: boolean }>>([]);
   const [allProgress, setAllProgress] = useState<ProgressRow[]>([]);
+  const [flashKey, setFlashKey] = useState<string | null>(null);
   const [wordCreatedAtByKey, setWordCreatedAtByKey] = useState<Record<string, string>>({});
   const [shownInRound, setShownInRound] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -460,15 +461,28 @@ export default function VocabPage() {
     if (masteredAt && !current.mastered_at) {
       setDue(rest);
       const next = pickNext(rest);
-      setCurrent(next);
-      if (next) addShownToday(next.canonical_key);
       setStats((s) => ({ ...s, due: rest.length, mastered: s.mastered + 1 }));
+      setFlashKey(current.canonical_key);
+      setTimeout(() => {
+        setFlashKey(null);
+        setCurrent(next);
+        if (next) addShownToday(next.canonical_key);
+      }, 500);
     } else if (due.length > 1) {
       const nextDue = [...due.slice(1), updatedRow];
       setDue(nextDue);
       const next = pickNext(nextDue);
-      setCurrent(next);
-      if (next) addShownToday(next.canonical_key);
+      if (correct) {
+        setFlashKey(current.canonical_key);
+        setTimeout(() => {
+          setFlashKey(null);
+          setCurrent(next);
+          if (next) addShownToday(next.canonical_key);
+        }, 500);
+      } else {
+        setCurrent(next);
+        if (next) addShownToday(next.canonical_key);
+      }
     } else {
       await loadDeck(PROGRESS_DEVICE_ID);
     }
@@ -505,22 +519,22 @@ export default function VocabPage() {
     }).length;
   }, [allProgress]);
 
-  // Histogram: learning words (0-5) + week review (6) + month review (7)
-  const HIST_LABELS = ["0", "1", "2", "3", "4", "5", "week", "month"];
+  // Histogram: learning words (0-4) + week review (5) + month review (6)
+  const HIST_LABELS = ["0", "1", "2", "3", "4", "week", "month"];
   const histogramBins = useMemo(() => {
-    const bins: string[][] = [[], [], [], [], [], [], [], []]; // 0-5, week(6), month(7)
+    const bins: string[][] = [[], [], [], [], [], [], []]; // 0-4, week(5), month(6)
     for (const r of allProgress) {
       if (r.mastered_at) {
         const masteredMs = new Date(r.mastered_at).getTime();
         const nextMs = new Date(r.next_review_at).getTime();
         // If next_review > mastered + 14 days, it's past the week review → month
         if (nextMs > masteredMs + 14 * 86400000) {
-          bins[7].push(r.canonical_key); // month
+          bins[6].push(r.canonical_key); // month
         } else {
-          bins[6].push(r.canonical_key); // week
+          bins[5].push(r.canonical_key); // week
         }
       } else {
-        const idx = Math.min(5, Math.max(0, r.correct_count));
+        const idx = Math.min(4, Math.max(0, r.correct_count));
         bins[idx].push(r.canonical_key);
       }
     }
@@ -585,7 +599,7 @@ export default function VocabPage() {
                   const count = keys.length;
                   const pct = histogramMax > 0 ? (count / histogramMax) * 100 : 0;
                   const isActiveBin = currentBin === i;
-                  const isSeparator = i === 6; // gap before week
+                  const isSeparator = i === 5; // gap before week
                   return (
                     <div key={i} className={`flex-1 flex flex-col items-center ${isSeparator ? "ml-2 border-l border-gray-200 pl-1.5" : ""}`} style={{ height: "100%" }}>
                       <div className="flex-1 w-full flex flex-col justify-end items-center">
@@ -603,14 +617,14 @@ export default function VocabPage() {
                               style={{
                                 flex: 1,
                                 minHeight: 0,
-                                backgroundColor: key === currentKey ? "#22c55e" : i >= 6 ? "#93c5fd" : "#d1d5db",
+                                backgroundColor: key === currentKey ? "#22c55e" : key === flashKey ? "#4ade80" : i >= 5 ? "#93c5fd" : "#d1d5db",
                                 borderBottom: count > 1 ? "1px solid rgba(255,255,255,0.5)" : undefined,
                               }}
                             />
                           ))}
                         </div>
                       </div>
-                      <div className={`text-[10px] tabular-nums mt-0.5 ${isActiveBin ? "font-bold text-emerald-600" : i >= 6 ? "text-blue-400" : "text-gray-500"}`}>{HIST_LABELS[i]}</div>
+                      <div className={`text-[10px] tabular-nums mt-0.5 ${isActiveBin ? "font-bold text-emerald-600" : i >= 5 ? "text-blue-400" : "text-gray-500"}`}>{HIST_LABELS[i]}</div>
                     </div>
                   );
                 })}

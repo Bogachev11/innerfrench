@@ -286,7 +286,10 @@ export default function DashboardPage() {
                       ))}
                     </div>
                     <div className="mt-[2px]">
-                      <MonthAxis dayKeys={month.days.map((d) => d.key)} />
+                      <MonthAxis
+                        dayKeys={month.days.map((d) => d.key)}
+                        todayKey={dayKey(new Date())}
+                      />
                     </div>
                   </div>
                   );
@@ -417,9 +420,10 @@ function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] 
   const out: MonthView[] = [];
 
   let cursor = START_KEY.slice(0, 7);
-  // Show current month + next month (empty preview)
+  // Show next month only after mid-month; otherwise stop at current month
   const now = new Date();
-  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const showNextMonth = now.getUTCDate() >= 15;
+  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + (showNextMonth ? 1 : 0), 1));
   const endMonth = `${nextM.getUTCFullYear()}-${String(nextM.getUTCMonth() + 1).padStart(2, "0")}`;
   while (cursor <= endMonth) {
     const [yy, mm] = cursor.split("-").map(Number);
@@ -471,28 +475,38 @@ function CompletedCard({ completed, total }: { completed: number; total: number 
   );
 }
 
-function MonthAxis({ dayKeys, totalSlots = 31 }: { dayKeys: string[]; totalSlots?: number }) {
+function MonthAxis({ dayKeys, totalSlots = 31, todayKey }: { dayKeys: string[]; totalSlots?: number; todayKey?: string }) {
   if (dayKeys.length === 0) return null;
   const dayNums = dayKeys.map((k) => Number(k.slice(8, 10)));
   const first = dayNums[0];
   const lastDay = dayNums[dayNums.length - 1];
+  const todayDay = todayKey && dayKeys.some((k) => k === todayKey)
+    ? Number(todayKey.slice(8, 10))
+    : null;
+  const regularLabels = [first, 10, 20, lastDay];
 
   return (
     <div className="relative h-5">
       <div className="absolute top-0 border-t border-black" style={{ left: 0, width: `${(dayNums.length / totalSlots) * 100}%` }} />
       {dayNums.map((day, idx) => {
-        const isLabel = day === first || day === 10 || day === 20 || day === lastDay;
-        if (!isLabel) return null;
+        const isRegular = regularLabels.includes(day);
+        const isToday = day === todayDay;
+        const nearToday = todayDay !== null && Math.abs(day - todayDay) <= 3;
+        const suppressNumber = isRegular && !isToday && nearToday;
+        if (!isRegular && !isToday) return null;
         const pct = ((idx + 0.5) / totalSlots) * 100;
-        const style = { left: `${pct}%`, transform: "translateX(-50%)" };
         return (
           <div
             key={`${dayKeys[idx]}_tick`}
             className="absolute top-0"
-            style={style}
+            style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
           >
-            <div className="w-px h-1 bg-black mx-auto" />
-            <div className="text-[11px] leading-none text-gray-700 mt-0">{day}</div>
+            <div className={`w-px mx-auto ${isToday ? "h-2 bg-black" : "h-1 bg-black"}`} />
+            {!suppressNumber && (
+              <div className={`text-[11px] leading-none mt-0 ${isToday ? "font-bold text-black" : "text-gray-700"}`}>
+                {day}
+              </div>
+            )}
           </div>
         );
       })}

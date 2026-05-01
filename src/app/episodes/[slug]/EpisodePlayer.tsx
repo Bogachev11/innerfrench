@@ -5,17 +5,37 @@ import type { Episode, Segment } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId } from "@/lib/device";
 
+const REFLEXIVE = new Set(["se", "me", "te", "nous", "vous"]);
+
+function getWordTokens(text: string): string[] {
+  const tokens = text.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [];
+  return tokens.filter((t) => /^[\p{L}][\p{L}'’-]*$/u.test(t));
+}
+
 interface WordPanelState {
-  word: string;
   segmentId: string;
   contextFr: string;
   contextRu: string | null;
+  wordTokens: string[];
+  startIdx: number;
+  endIdx: number;
+  /** When set, phrase is from text selection (finger), not Prev/Next */
+  selectedPhrase?: string;
+}
+
+interface SelectionBarState {
+  segmentId: string;
+  contextFr: string;
+  contextRu: string | null;
+  selectedText: string;
 }
 
 interface WordTranslation {
   translation: string;
   lemma: string;
   short_note: string;
+  translation_2?: string;
+  translation_3?: string;
 }
 
 function formatTime(ms: number) {
@@ -50,6 +70,7 @@ export function EpisodePlayer({
   const [wordLoading, setWordLoading] = useState(false);
   const [wordSaveMsg, setWordSaveMsg] = useState("");
   const [savedWords, setSavedWords] = useState<Set<string>>(new Set());
+  const [selectionBar, setSelectionBar] = useState<SelectionBarState | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => { currentMsRef.current = currentMs; }, [currentMs]);
@@ -168,92 +189,107 @@ export function EpisodePlayer({
     }
   }
 
-  async function openWordPanel(word: string, seg: Segment) {
+  function getSelectedText(panel: WordPanelState): string {
+    if (panel.selectedPhrase) return panel.selectedPhrase;
+    return panel.wordTokens.slice(panel.startIdx, panel.endIdx + 1).join(" ");
+  }
+
+  function openWordPanel(token: string, seg: Segment, tokenIndex: number) {
+    const wordTokens = getWordTokens(seg.fr_text ?? "");
+    let startIdx = Math.max(0, Math.min(tokenIndex, wordTokens.length - 1));
+    let endIdx = startIdx;
+    if (REFLEXIVE.has(wordTokens[startIdx]?.toLowerCase()) && wordTokens[endIdx + 1]) endIdx += 1;
     setWordPanel({
-      word,
       segmentId: seg.id,
-      contextFr: seg.fr_text,
-      contextRu: seg.ru_text,
+      contextFr: seg.fr_text ?? "",
+      contextRu: seg.ru_text ?? null,
+      wordTokens,
+      startIdx,
+      endIdx,
     });
     setWordTranslation(null);
     setWordSaveMsg("");
-    setWordLoading(true);
-
-    try {
-      const res = await fetch("/api/word-translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ word, contextFr: seg.fr_text }),
-      });
-      const data = await res.json();
-      setWordTranslation({
-        translation: data.translation || "",
-        lemma: data.lemma || word,
-        short_note: data.short_note || "",
-      });
-    } catch {
-      setWordTranslation({ translation: "Translation error", lemma: word, short_note: "" });
-    } finally {
-      setWordLoading(false);
-    }
   }
+
+  useEffect(() => {
+    if (!wordPanel) return;
+    setWordLoading(true);
+    const phrase = getSelectedText(wordPanel);
+    fetch("/api/word-translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word: phrase, contextFr: wordPanel.contextFr }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setWordTranslation({
+          translation: data.translation || "",
+          lemma: data.lemma || phrase,
+          short_note: data.short_note || "",
+          translation_2: data.translation_2,
+          translation_3: data.translation_3,
+        });
+      })
+      .catch(() => setWordTranslation({ translation: "Translation error", lemma: phrase, short_note: "" }))
+      .finally(() => setWordLoading(false));
+  }, [wordPanel?.segmentId, wordPanel?.startIdx, wordPanel?.endIdx]);
 
   async function saveWord() {
     if (!wordPanel || !wordTranslation) return;
     const deviceId = getDeviceId();
-    const { error } = await supabase.from("user_words").insert({
-      device_id: deviceId,
-      episode_id: episode.id,
-      segment_id: wordPanel.segmentId,
-      word: wordPanel.word.toLowerCase(),
-      lemma: wordTranslation.lemma,
-      translation_ru: wordTranslation.translation,
-      context_fr: wordPanel.contextFr,
-      context_ru: wordPanel.contextRu,
-    });
-    if (error) {
-      setWordSaveMsg("Failed to save");
-      return;
-    }
-    setSavedWords((prev) => {
-      const next = new Set(prev);
-      next.add(wordPanel.word.toLowerCase());
-      return next;
-    });
-    setWordSaveMsg("Word saved");
-    const word = wordPanel.word.toLowerCase();
-    const lemma = (wordTranslation.lemma || word).trim();
-    fetch("/api/word-info", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const word = getSelectedText(wordPanel).toLowerCase().trim();
+    if (!word) return;
+    setWordSaveMsg("…");
+    try {
+      const payload: Record<string, unknown> = {
+        device_id: deviceId,
+        episode_id: episode.id,
+        segment_id: wordPanel.segmentId,
         word,
-        lemma: wordTranslation.lemma || undefined,
-        translationRu: wordTranslation.translation,
-        contextFr: wordPanel.contextFr || "",
-      }),
-    })
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (!data) return;
-        const canonical_key = (lemma || word).trim().toLowerCase();
-        return supabase.from("word_info").upsert(
-          {
-            canonical_key,
-            grammar: data.grammar ?? "",
-            example_fr: data.example_fr ?? "",
-            example_ru: data.example_ru ?? "",
-          },
-          { onConflict: "canonical_key" }
-        );
+        lemma: (wordTranslation.lemma || word).trim(),
+        translation_ru: wordTranslation.translation,
+        context_fr: wordPanel.contextFr,
+        context_ru: wordPanel.contextRu,
+      };
+      const { error } = await supabase.from("user_words").insert(payload);
+      if (error) {
+        setWordSaveMsg("Error: " + (error.message || "save failed"));
+        return;
+      }
+      setSavedWords((prev) => new Set(prev).add(word));
+      setWordSaveMsg("Saved");
+      setTimeout(closeWordPanel, 500);
+      const lemma = (wordTranslation.lemma || word).trim().toLowerCase();
+      fetch("/api/word-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          word,
+          lemma: wordTranslation.lemma || undefined,
+          translationRu: wordTranslation.translation,
+          contextFr: wordPanel.contextFr || "",
+        }),
       })
-      .catch(() => {});
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data) return;
+          return supabase.from("word_info").upsert(
+            { canonical_key: lemma, grammar: data.grammar ?? "", example_fr: data.example_fr ?? "", example_ru: data.example_ru ?? "" },
+            { onConflict: "canonical_key" }
+          );
+        })
+        .catch(() => {});
+    } catch (e) {
+      setWordSaveMsg("Error: " + (e instanceof Error ? e.message : "save failed"));
+    }
   }
 
   function renderWordTokens(text: string, seg: Segment) {
     const tokens = text.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [text];
+    let wordIdx = -1;
     return tokens.map((token, idx) => {
       if (/^[\p{L}][\p{L}'’-]*$/u.test(token)) {
+        wordIdx += 1;
         const normalized = token.toLowerCase();
         const isSaved = savedWords.has(normalized);
         return (
@@ -265,7 +301,7 @@ export function EpisodePlayer({
             }`}
             onClick={(e) => {
               e.stopPropagation();
-              openWordPanel(token, seg);
+              openWordPanel(token, seg, wordIdx);
             }}
           >
             {token}
@@ -314,6 +350,90 @@ export function EpisodePlayer({
         setSavedWords(new Set(data.map((r) => String(r.word).toLowerCase())));
       });
   }, []);
+
+  const handlePointerUp = useCallback((ev: TouchEvent | MouseEvent) => {
+    const target = ev.target as Node;
+    if (target && (document.querySelector("[data-word-panel]")?.contains(target) || document.querySelector("[data-selection-bar]")?.contains(target))) return;
+    const sel = window.getSelection();
+    const text = sel?.toString?.()?.trim?.() ?? "";
+    const anchor = sel?.anchorNode;
+    if (!anchor) return;
+    const segmentEl = (anchor as Node).nodeType === Node.ELEMENT_NODE
+      ? (anchor as Element).closest("[data-segment-id]")
+      : (anchor as Node).parentElement?.closest("[data-segment-id]");
+    if (!segmentEl) return;
+    const segmentId = (segmentEl as HTMLElement).dataset.segmentId;
+    if (!segmentId) return;
+    const seg = segments.find((s) => s.id === segmentId);
+    if (!seg) return;
+
+    if (text) {
+      setSelectionBar({
+        segmentId,
+        contextFr: seg.fr_text ?? "",
+        contextRu: seg.ru_text ?? null,
+        selectedText: text,
+      });
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range?.collapsed) return;
+    const container = range.startContainer;
+    if (container.nodeType !== Node.TEXT_NODE) return;
+    const offset = range.startOffset;
+    const fullText = seg.fr_text ?? "";
+    const tokens = fullText.match(/[\p{L}][\p{L}'’-]*|[^\p{L}]+/gu) ?? [];
+    let pos = 0;
+    let wordIdx = -1;
+    for (let i = 0; i < tokens.length; i++) {
+      if (/^[\p{L}][\p{L}'’-]*$/u.test(tokens[i])) wordIdx++;
+      if (offset >= pos && offset < pos + tokens[i].length) {
+        const token = tokens[i];
+        if (/^[\p{L}][\p{L}'’-]*$/u.test(token)) {
+          openWordPanel(token, seg, wordIdx);
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+        break;
+      }
+      pos += tokens[i].length;
+    }
+  }, [segments]);
+
+  useEffect(() => {
+    document.addEventListener("touchend", handlePointerUp, true);
+    document.addEventListener("mouseup", handlePointerUp, true);
+    return () => {
+      document.removeEventListener("touchend", handlePointerUp, true);
+      document.removeEventListener("mouseup", handlePointerUp, true);
+    };
+  }, [handlePointerUp]);
+
+  const closeWordPanel = useCallback(() => {
+    window.getSelection()?.removeAllRanges();
+    setSelectionBar(null);
+    setWordPanel(null);
+    setWordSaveMsg("");
+  }, []);
+
+  function openPanelFromSelection(sel: SelectionBarState) {
+    setWordPanel({
+      segmentId: sel.segmentId,
+      contextFr: sel.contextFr,
+      contextRu: sel.contextRu,
+      wordTokens: getWordTokens(sel.contextFr),
+      startIdx: 0,
+      endIdx: 0,
+      selectedPhrase: sel.selectedText,
+    });
+    setWordTranslation(null);
+    setWordSaveMsg("");
+    window.getSelection()?.removeAllRanges();
+    setSelectionBar(null);
+  }
 
   const seek = useCallback((ms: number) => {
     if (audioRef.current) {
@@ -364,16 +484,22 @@ export function EpisodePlayer({
               <div
                 key={seg.id}
                 ref={isActive ? activeRef : null}
-                onClick={() => seek(seg.start_ms)}
+                onClick={() => {
+                  if (window.getSelection()?.toString()?.trim()) return;
+                  seek(seg.start_ms);
+                }}
                 className={`grid grid-cols-2 gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                   isActive ? "bg-blue-50 border-l-2 border-brand" : "hover:bg-gray-50"
                 }`}
               >
-                <div className="text-sm leading-relaxed text-gray-900">
+                <div
+                  className="text-sm leading-relaxed text-gray-900 select-text touch-manipulation"
+                  data-segment-id={seg.id}
+                >
                   <span className="text-[10px] text-muted tabular-nums mr-1">
                     {formatTime(seg.start_ms)}
                   </span>
-                  {renderWordTokens(seg.fr_text, seg)}
+                  {seg.fr_text}
                 </div>
                 <div className="text-sm leading-relaxed text-gray-500">
                   {seg.ru_text || (
@@ -419,36 +545,95 @@ export function EpisodePlayer({
         </div>
       </div>
 
+      {selectionBar && (
+        <div data-selection-bar className="fixed inset-0 z-30 flex flex-col justify-end">
+          <div className="flex-1 bg-black/20" onClick={() => { window.getSelection()?.removeAllRanges(); setSelectionBar(null); }} aria-hidden />
+          <div className="bg-white border-t border-gray-200 shadow-2xl p-3 pb-6">
+          <div className="max-w-4xl mx-auto flex items-center gap-3 flex-wrap">
+            <span className="text-sm text-gray-700 flex-1 min-w-0 truncate" title={selectionBar.selectedText}>
+              &ldquo;{selectionBar.selectedText}&rdquo;
+            </span>
+            <div className="flex gap-2 shrink-0">
+              <button
+                type="button"
+                className="min-h-[44px] min-w-[44px] px-4 rounded-lg bg-brand text-white text-sm font-medium touch-manipulation"
+                onClick={() => openPanelFromSelection(selectionBar)}
+              >
+                Add phrase
+              </button>
+              <button
+                type="button"
+                className="min-h-[44px] min-w-[44px] px-3 rounded-lg bg-gray-100 text-gray-700 text-sm touch-manipulation"
+                onClick={() => {
+                  window.getSelection()?.removeAllRanges();
+                  setSelectionBar(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+          </div>
+        </div>
+      )}
+
       {wordPanel && (
-        <div className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-gray-200 shadow-2xl p-4">
-          <div className="max-w-4xl mx-auto space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-gray-900">{wordPanel.word}</div>
-              <button
-                type="button"
-                className="text-xs text-gray-500"
-                onClick={() => setWordPanel(null)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="text-sm text-gray-700">
-              {wordLoading ? "Translating..." : (wordTranslation?.translation || "No translation")}
-            </div>
-            {wordTranslation?.short_note && (
-              <div className="text-xs text-gray-500">{wordTranslation.short_note}</div>
-            )}
-            <div className="text-xs text-gray-500 line-clamp-2">{wordPanel.contextFr}</div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="text-xs px-3 py-1.5 rounded bg-brand text-white disabled:opacity-50"
-                disabled={wordLoading || !wordTranslation}
-                onClick={saveWord}
-              >
-                Save word
-              </button>
-              {wordSaveMsg && <span className="text-xs text-gray-500">{wordSaveMsg}</span>}
+        <div data-word-panel className="fixed inset-0 z-30 flex flex-col justify-end">
+          <div className="flex-1 bg-black/20" onClick={closeWordPanel} onTouchEnd={(e) => { e.preventDefault(); closeWordPanel(); }} aria-hidden />
+          <div className="bg-white border-t border-gray-200 shadow-2xl p-4 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="max-w-4xl mx-auto space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    className="min-h-[44px] min-w-[44px] px-2 rounded-lg bg-gray-100 disabled:opacity-40 touch-manipulation text-sm"
+                    disabled={wordPanel.startIdx <= 0}
+                    onClick={() => setWordPanel((p) => (p && p.startIdx > 0 ? { ...p, startIdx: p.startIdx - 1, selectedPhrase: undefined } : p))}
+                  >
+                    ← Prev
+                  </button>
+                  <span className="text-sm font-semibold text-gray-900 py-2">&ldquo;{getSelectedText(wordPanel)}&rdquo;</span>
+                  <button
+                    type="button"
+                    className="min-h-[44px] min-w-[44px] px-2 rounded-lg bg-gray-100 disabled:opacity-40 touch-manipulation text-sm"
+                    disabled={wordPanel.endIdx >= wordPanel.wordTokens.length - 1}
+                    onClick={() =>
+                      setWordPanel((p) =>
+                        p && p.endIdx < p.wordTokens.length - 1 ? { ...p, endIdx: p.endIdx + 1, selectedPhrase: undefined } : p
+                      )
+                    }
+                  >
+                    Next →
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="min-h-[44px] px-4 rounded-lg bg-gray-200 text-gray-800 shrink-0 touch-manipulation text-sm font-medium"
+                  onClick={closeWordPanel}
+                  onTouchEnd={(e) => { e.preventDefault(); closeWordPanel(); }}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="text-sm text-gray-700">
+                {wordLoading ? "…" : (wordTranslation?.translation || "—")}
+                {wordTranslation?.translation_2 && `; ${wordTranslation.translation_2}`}
+                {wordTranslation?.translation_3 && `; ${wordTranslation.translation_3}`}
+              </div>
+              {wordTranslation?.short_note && <div className="text-xs text-gray-500">{wordTranslation.short_note}</div>}
+              <div className="text-xs text-gray-500 line-clamp-2">{wordPanel.contextFr}</div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  className="min-h-[44px] px-4 rounded-lg bg-brand text-white disabled:opacity-50 text-sm font-medium touch-manipulation"
+                  disabled={wordLoading || !wordTranslation}
+                  onClick={() => saveWord()}
+                  onTouchEnd={(e) => { if (!wordLoading && wordTranslation) { e.preventDefault(); saveWord(); } }}
+                >
+                  Save
+                </button>
+                {wordSaveMsg && <span className={`text-sm font-medium ${wordSaveMsg === "Saved" ? "text-green-600" : "text-gray-500"}`}>{wordSaveMsg}</span>}
+              </div>
             </div>
           </div>
         </div>
