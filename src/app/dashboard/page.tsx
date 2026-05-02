@@ -257,7 +257,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-4 gap-2">
               <Card label="Total Time" value={formatHoursMinutes(model.totalMinutes)} />
               <CompletedCard completed={model.completedCount} total={TOTAL_EPISODES} />
-              <Card label="Average / Day" value={String(model.avgMinutesPerDay)} />
+              <Card label="Average / Day" value={`${model.avgMinutesPerDay}m`} />
               <Card label="Streak" value={model.streakBroken ? "🤷‍♂️" : `⚡ ${model.streakDays}`} />
             </div>
 
