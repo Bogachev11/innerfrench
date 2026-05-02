@@ -255,7 +255,7 @@ export default function DashboardPage() {
         ) : (
           <div className="space-y-7">
             <div className="grid grid-cols-4 gap-2">
-              <Card label="Total Minutes" value={String(model.totalMinutes)} />
+              <Card label="Total Time" value={formatHoursMinutes(model.totalMinutes)} />
               <CompletedCard completed={model.completedCount} total={TOTAL_EPISODES} />
               <Card label="Average / Day" value={String(model.avgMinutesPerDay)} />
               <Card label="Streak" value={model.streakBroken ? "🤷‍♂️" : `⚡ ${model.streakDays}`} />
@@ -344,6 +344,14 @@ export default function DashboardPage() {
       </main>
     </div>
   );
+}
+
+function formatHoursMinutes(totalMinutes: number): string {
+  const m = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  if (h === 0) return `${mm}m`;
+  return `${h}h ${mm}m`;
 }
 
 function dayKey(input: string | Date): string {
