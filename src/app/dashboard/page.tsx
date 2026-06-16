@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { getDeviceId, setDeviceId } from "@/lib/device";
 
@@ -8,6 +8,39 @@ const TZ = "Europe/Paris";
 const START_KEY = "2026-03-01";
 const TOTAL_EPISODES = 190;
 const C1_EPISODES = new Set([40, 74, 94, 96, 101, 105]);
+
+// Teal shades per CEFR level, brighter → darker as difficulty rises.
+// Anchors: B1 = #119DA4 (Dark Cyan), B2 = #19647E (Blue Slate).
+function levelColor(epNumber: number): string {
+  if (C1_EPISODES.has(epNumber)) return "#0E3D52"; // C1 — darkest
+  if (epNumber <= 34) return "#8AD5DA";            // A2 — palest
+  if (epNumber <= 79) return "#119DA4";            // B1 — Dark Cyan
+  return "#19647E";                                 // B2 — Blue Slate
+}
+
+// Left-to-right gradient ending in the level base color, with a wider
+// light→dark contrast than the original bg-progress-done.
+function levelGradient(epNumber: number): string {
+  const c = levelColor(epNumber);
+  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 60%) 0%, color-mix(in srgb, ${c}, white 28%) 50%, ${c} 100%)`;
+}
+
+// Paint the [from, to] slice of the full-episode gradient inside a div sized
+// to that same slice — so adjacent days' squares for the same episode line up
+// as one continuous gradient.
+function gradientSliceStyle(
+  epNumber: number,
+  from: number,
+  to: number
+): CSSProperties {
+  const span = Math.max(to - from, 0.001);
+  return {
+    backgroundImage: levelGradient(epNumber),
+    backgroundSize: `${100 / span}% 100%`,
+    backgroundPosition: `${(-from * 100) / span}% 0`,
+    backgroundRepeat: "no-repeat",
+  };
+}
 
 interface EpisodeProgressView {
   number: number;
@@ -265,18 +298,17 @@ export default function DashboardPage() {
               {/* section title removed */}
               <div className="space-y-0">
                 {model.months.map((month) => {
-                  const hasEpisodes = month.days.some((d) => d.episodes.length > 0);
                   return (
                   <div key={month.key} className="space-y-0">
-                    <div className="text-xs text-gray-500 font-medium">{month.label}</div>
+                    <div className="text-xs text-gray-500 font-semibold mb-1">{month.label}</div>
                     <div
                       className="grid gap-0 items-end"
-                      style={{ gridTemplateColumns: `repeat(31, minmax(0, 1fr))`, minHeight: hasEpisodes ? undefined : 40 }}
+                      style={{ gridTemplateColumns: `repeat(31, minmax(0, 1fr))` }}
                     >
                       {month.days.map((day) => (
                         <div key={day.key} className="min-w-0">
                           <div className="flex flex-col justify-end">
-                            {Array.from({ length: 4 }).map((_, i) => {
+                            {Array.from({ length: 3 }).map((_, i) => {
                               const shown = [...day.episodes]
                                 .sort((a, b) => {
                                   if (a.completedToday !== b.completedToday) {
@@ -284,10 +316,10 @@ export default function DashboardPage() {
                                   }
                                   return a.number - b.number;
                                 })
-                                .slice(0, 4);
-                              const startRow = 4 - shown.length;
+                                .slice(0, 3);
+                              const startRow = 3 - shown.length;
                               const ep = i < startRow ? undefined : shown[i - startRow];
-                              if (!ep) return <div key={`${day.key}_empty_${i}`} />;
+                              if (!ep) return <div key={`${day.key}_empty_${i}`} className="w-full aspect-square" />;
                               return (
                                 <DaySquare
                                   key={`${day.key}_${ep.number}`}
@@ -450,11 +482,9 @@ function buildMonths(dayMap: Map<string, Map<number, DayEpisode>>): MonthView[] 
   const out: MonthView[] = [];
 
   let cursor = START_KEY.slice(0, 7);
-  // Show next month only after mid-month; otherwise stop at current month
+  // Stop at the current month — no empty preview of the next one.
   const now = new Date();
-  const showNextMonth = now.getUTCDate() >= 15;
-  const nextM = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + (showNextMonth ? 1 : 0), 1));
-  const endMonth = `${nextM.getUTCFullYear()}-${String(nextM.getUTCMonth() + 1).padStart(2, "0")}`;
+  const endMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   while (cursor <= endMonth) {
     const [yy, mm] = cursor.split("-").map(Number);
     const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
@@ -567,14 +597,14 @@ function DaySquare({
     <div className={`w-full aspect-square rounded-[2px] relative overflow-hidden ${borderClass}`}>
       {completedToday ? (
         <div
-          className="absolute top-0 bottom-0 bg-progress-done"
-          style={{ left: `${from * 100}%`, right: 0 }}
+          className="absolute top-0 bottom-0"
+          style={{ left: `${from * 100}%`, right: 0, ...gradientSliceStyle(number, from, 1) }}
         />
       ) : (
         to > 0 && (
           <div
-            className="absolute left-0 top-0 bottom-0 bg-progress-warn"
-            style={{ width: `${to * 100}%` }}
+            className="absolute left-0 top-0 bottom-0"
+            style={{ width: `${to * 100}%`, ...gradientSliceStyle(number, 0, to) }}
           />
         )
       )}
@@ -609,7 +639,8 @@ function MiniSquare({
     return (
       <div
         title={title}
-        className={`${baseSize} bg-progress-done text-white ${textSize} leading-none flex items-center justify-center font-semibold`}
+        className={`${baseSize} text-white ${textSize} leading-none flex items-center justify-center font-semibold`}
+        style={{ backgroundImage: typeof number === "number" ? levelGradient(number) : undefined, backgroundColor: typeof number === "number" ? undefined : "#19647E" }}
       >
         {number ?? "✓"}
       </div>
@@ -625,11 +656,15 @@ function MiniSquare({
       </div>
     );
   }
+  const partialStyle: CSSProperties =
+    typeof number === "number"
+      ? { width: `${safeRatio * 100}%`, height: "100%", ...gradientSliceStyle(number, 0, safeRatio) }
+      : { width: `${safeRatio * 100}%`, height: "100%", backgroundColor: "#119DA4" };
   return (
     <div title={title} className={`${baseSize} bg-gray-200 relative overflow-hidden`}>
       <div
-        className="absolute left-0 bottom-0 bg-progress-warn"
-        style={{ width: `${safeRatio * 100}%`, height: "100%" }}
+        className="absolute left-0 bottom-0"
+        style={partialStyle}
       />
       {typeof number === "number" && (
         <div className={`absolute inset-0 text-gray-700 ${textSize} leading-none flex items-center justify-center font-medium`}>
