@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import type { Episode } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
@@ -35,6 +35,35 @@ interface CardStats {
 }
 
 const C1_EPISODES = new Set([40, 74, 94, 96, 101, 105]);
+
+// Teal palette per CEFR level — mirrors dashboard. Brighter → darker as
+// difficulty rises. A2 stays light enough that white text on it is unreadable,
+// so isLightLevel() guides the text color.
+function levelColor(epNumber: number): string {
+  if (C1_EPISODES.has(epNumber)) return "#0E3D52";
+  if (epNumber <= 34) return "#8AD5DA";
+  if (epNumber <= 79) return "#119DA4";
+  return "#19647E";
+}
+
+function levelGradient(epNumber: number): string {
+  const c = levelColor(epNumber);
+  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 60%) 0%, color-mix(in srgb, ${c}, white 28%) 50%, ${c} 100%)`;
+}
+
+function gradientSliceStyle(epNumber: number, from: number, to: number): CSSProperties {
+  const span = Math.max(to - from, 0.001);
+  return {
+    backgroundImage: levelGradient(epNumber),
+    backgroundSize: `${100 / span}% 100%`,
+    backgroundPosition: `${(-from * 100) / span}% 0`,
+    backgroundRepeat: "no-repeat",
+  };
+}
+
+function isLightLevel(epNumber: number): boolean {
+  return !C1_EPISODES.has(epNumber) && epNumber <= 34;
+}
 
 function formatMin(sec: number) {
   return `${Math.floor(sec / 60)} min`;
@@ -112,24 +141,36 @@ function EpisodeGroup({
         const pct = durMs > 0 && p ? Math.min((p.last_position_ms / durMs) * 100, 100) : 0;
         const isExpanded = expandedId === ep.id;
 
+        const isLight = isLightLevel(ep.number);
+        const onDoneTextStrong = isLight ? "text-gray-900" : "text-white";
+        const onDoneTextSoft = isLight ? "text-gray-700" : "text-white";
+
         return (
           <div key={ep.id} className="rounded-lg overflow-hidden">
             <div
               className="relative cursor-pointer active:opacity-80 select-none"
               onClick={() => setExpandedId(isExpanded ? null : ep.id)}
             >
-              <div className={`absolute inset-0 transition-all ${done ? "bg-progress-done" : "bg-progress-warn"}`}
-                style={{ width: done ? "100%" : `${pct}%` }} />
+              {done ? (
+                <div className="absolute inset-0 transition-all" style={{ backgroundImage: levelGradient(ep.number) }} />
+              ) : (
+                pct > 0 && (
+                  <div
+                    className="absolute left-0 top-0 bottom-0 transition-all"
+                    style={{ width: `${pct}%`, ...gradientSliceStyle(ep.number, 0, pct / 100) }}
+                  />
+                )
+              )}
               <div className="absolute inset-0 bg-white/40" style={{ left: done ? "100%" : `${pct}%` }} />
               <div className="relative flex items-center gap-3 px-3 py-2.5">
-                <span className={`text-xs font-semibold w-7 text-right tabular-nums ${done ? "text-emerald-600" : "text-gray-400"}`}>
+                <span className={`text-xs font-semibold w-7 text-right tabular-nums ${done ? onDoneTextSoft : "text-gray-400"}`}>
                   {ep.number}
                 </span>
-                <span className={`flex-1 text-sm leading-snug ${done ? "text-emerald-800" : "text-gray-900"}`}>
+                <span className={`flex-1 text-sm leading-snug ${done ? onDoneTextStrong : "text-gray-900"}`}>
                   {ep.title}
                 </span>
                 {ep.duration_sec != null && ep.duration_sec > 0 && (
-                  <span className={`text-xs whitespace-nowrap tabular-nums ${done ? "text-white" : "text-gray-400"}`}>
+                  <span className={`text-xs whitespace-nowrap tabular-nums ${done ? onDoneTextSoft : "text-gray-400"}`}>
                     {formatMin(ep.duration_sec)}
                   </span>
                 )}

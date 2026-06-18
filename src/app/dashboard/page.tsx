@@ -588,26 +588,32 @@ function DaySquare({
   number: number;
 }) {
   const from = Math.max(0, Math.min(1, fromRatio));
-  const to = Math.max(from, Math.min(1, toRatio));
-  const fullyPainted = completedToday && from === 0;
+  const to = completedToday ? 1 : Math.max(from, Math.min(1, toRatio));
+  const fullyPainted = from === 0 && to === 1;
   const textColor = fullyPainted ? "text-white" : "text-gray-700";
   const borderClass = fullyPainted ? "" : "ring-1 ring-inset ring-gray-300";
 
   return (
     <div className={`w-full aspect-square rounded-[2px] relative overflow-hidden ${borderClass}`}>
-      {completedToday ? (
-        <div
-          className="absolute top-0 bottom-0"
-          style={{ left: `${from * 100}%`, right: 0, ...gradientSliceStyle(number, from, 1) }}
-        />
-      ) : (
-        to > 0 && (
-          <div
-            className="absolute left-0 top-0 bottom-0"
-            style={{ width: `${to * 100}%`, ...gradientSliceStyle(number, 0, to) }}
-          />
-        )
-      )}
+      {to > from && (() => {
+        // Each day-square paints only its [from, to] slice of the episode's
+        // full level gradient, positioned at the same offset inside the square.
+        // Stacking adjacent days for the same episode side-by-side reconstructs
+        // the full gradient. Slices narrower than ~3% would otherwise be too
+        // pale (left end of gradient) or sub-pixel — fall back to solid level
+        // base color with a minimum visible thickness.
+        const widthPct = (to - from) * 100;
+        const tooThin = widthPct < 3;
+        const fillStyle: CSSProperties = {
+          left: `${from * 100}%`,
+          width: `${widthPct}%`,
+          minWidth: "3px",
+          ...(tooThin
+            ? { backgroundColor: levelColor(number) }
+            : gradientSliceStyle(number, from, to)),
+        };
+        return <div className="absolute top-0 bottom-0" style={fillStyle} />;
+      })()}
       <div className={`absolute inset-0 ${textColor} text-[6px] leading-none flex items-center justify-center font-medium`}>
         {number}
       </div>
