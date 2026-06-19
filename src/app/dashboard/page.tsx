@@ -596,23 +596,23 @@ function DaySquare({
   return (
     <div className={`w-full aspect-square rounded-[2px] relative overflow-hidden ${borderClass}`}>
       {to > from && (() => {
-        // Each day-square paints only its [from, to] slice of the episode's
-        // full level gradient, positioned at the same offset inside the square.
-        // Stacking adjacent days for the same episode side-by-side reconstructs
-        // the full gradient. Slices narrower than ~3% would otherwise be too
-        // pale (left end of gradient) or sub-pixel — fall back to solid level
-        // base color with a minimum visible thickness.
+        // Each day-square is filled FROM THE LEFT for the amount listened
+        // that day (= to - from). The gradient colour itself is taken from
+        // the [from, to] slice of the episode's full level gradient, so
+        // deeper-into-the-episode days look darker — but the visible bar
+        // always starts at the square's left edge, like a progress bar of
+        // today's listening. Sub-3% slivers fall back to a solid level
+        // base colour with a minimum visible thickness.
         const widthPct = (to - from) * 100;
         const tooThin = widthPct < 3;
         const fillStyle: CSSProperties = {
-          left: `${from * 100}%`,
           width: `${widthPct}%`,
           minWidth: "3px",
           ...(tooThin
             ? { backgroundColor: levelColor(number) }
             : gradientSliceStyle(number, from, to)),
         };
-        return <div className="absolute top-0 bottom-0" style={fillStyle} />;
+        return <div className="absolute left-0 top-0 bottom-0" style={fillStyle} />;
       })()}
       <div className={`absolute inset-0 ${textColor} text-[6px] leading-none flex items-center justify-center font-medium`}>
         {number}
