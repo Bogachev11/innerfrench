@@ -18,28 +18,13 @@ function levelColor(epNumber: number): string {
   return "#19647E";                                 // B2 — Blue Slate
 }
 
-// Left-to-right gradient ending in the level base color, with a wider
-// light→dark contrast than the original bg-progress-done.
+// Pronounced left→dark gradient ending in the level base color. Each day's
+// listened slice fills with its OWN full gradient (light left → dark right),
+// so every slice — left or right half — is clearly visible with a strong
+// gradient, regardless of where in the episode it falls.
 function levelGradient(epNumber: number): string {
   const c = levelColor(epNumber);
-  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 60%) 0%, color-mix(in srgb, ${c}, white 28%) 50%, ${c} 100%)`;
-}
-
-// Paint the [from, to] slice of the full-episode gradient inside a div sized
-// to that same slice — so adjacent days' squares for the same episode line up
-// as one continuous gradient.
-function gradientSliceStyle(
-  epNumber: number,
-  from: number,
-  to: number
-): CSSProperties {
-  const span = Math.max(to - from, 0.001);
-  return {
-    backgroundImage: levelGradient(epNumber),
-    backgroundSize: `${100 / span}% 100%`,
-    backgroundPosition: `${(-from * 100) / span}% 0`,
-    backgroundRepeat: "no-repeat",
-  };
+  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 55%) 0%, color-mix(in srgb, ${c}, white 25%) 55%, ${c} 100%)`;
 }
 
 interface EpisodeProgressView {
@@ -596,25 +581,30 @@ function DaySquare({
   return (
     <div className={`w-full aspect-square rounded-[2px] relative overflow-hidden ${borderClass}`}>
       {to > from && (() => {
-        // Each day-square is filled FROM THE LEFT for the amount listened
-        // that day (= to - from). The gradient colour itself is taken from
-        // the [from, to] slice of the episode's full level gradient, so
-        // deeper-into-the-episode days look darker — but the visible bar
-        // always starts at the square's left edge, like a progress bar of
-        // today's listening. Sub-3% slivers fall back to a solid level
-        // base colour with a minimum visible thickness.
+        // Each day-square paints the listened slice at the SAME offset inside
+        // the square as the listening covered in the episode (first-half →
+        // left, second-half → right). The slice is filled with its OWN full
+        // level gradient (light → dark), so every slice is clearly visible
+        // with a pronounced gradient regardless of where it falls. Sub-3%
+        // slivers fall back to a solid level base colour.
         const widthPct = (to - from) * 100;
-        const tooThin = widthPct < 3;
-        const fillStyle: CSSProperties = {
-          width: `${widthPct}%`,
-          minWidth: "3px",
-          ...(tooThin
+        const fillStyle: CSSProperties =
+          widthPct < 3
             ? { backgroundColor: levelColor(number) }
-            : gradientSliceStyle(number, from, to)),
-        };
-        return <div className="absolute left-0 top-0 bottom-0" style={fillStyle} />;
+            : { backgroundImage: levelGradient(number) };
+        return (
+          <div
+            className="absolute top-0 bottom-0"
+            style={{
+              left: `${from * 100}%`,
+              width: `${widthPct}%`,
+              minWidth: "3px",
+              ...fillStyle,
+            }}
+          />
+        );
       })()}
-      <div className={`absolute inset-0 ${textColor} text-[6px] leading-none flex items-center justify-center font-medium`}>
+      <div className={`absolute inset-0 ${textColor} text-[6px] sm:text-[8px] leading-none flex items-center justify-center font-medium`}>
         {number}
       </div>
     </div>
@@ -664,7 +654,7 @@ function MiniSquare({
   }
   const partialStyle: CSSProperties =
     typeof number === "number"
-      ? { width: `${safeRatio * 100}%`, height: "100%", ...gradientSliceStyle(number, 0, safeRatio) }
+      ? { width: `${safeRatio * 100}%`, height: "100%", backgroundImage: levelGradient(number) }
       : { width: `${safeRatio * 100}%`, height: "100%", backgroundColor: "#119DA4" };
   return (
     <div title={title} className={`${baseSize} bg-gray-200 relative overflow-hidden`}>

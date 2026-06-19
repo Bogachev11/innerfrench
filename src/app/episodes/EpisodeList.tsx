@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Episode } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
@@ -48,17 +48,7 @@ function levelColor(epNumber: number): string {
 
 function levelGradient(epNumber: number): string {
   const c = levelColor(epNumber);
-  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 60%) 0%, color-mix(in srgb, ${c}, white 28%) 50%, ${c} 100%)`;
-}
-
-function gradientSliceStyle(epNumber: number, from: number, to: number): CSSProperties {
-  const span = Math.max(to - from, 0.001);
-  return {
-    backgroundImage: levelGradient(epNumber),
-    backgroundSize: `${100 / span}% 100%`,
-    backgroundPosition: `${(-from * 100) / span}% 0`,
-    backgroundRepeat: "no-repeat",
-  };
+  return `linear-gradient(90deg, color-mix(in srgb, ${c}, white 55%) 0%, color-mix(in srgb, ${c}, white 25%) 55%, ${c} 100%)`;
 }
 
 function isLightLevel(epNumber: number): boolean {
@@ -157,7 +147,7 @@ function EpisodeGroup({
                 pct > 0 && (
                   <div
                     className="absolute left-0 top-0 bottom-0 transition-all"
-                    style={{ width: `${pct}%`, ...gradientSliceStyle(ep.number, 0, pct / 100) }}
+                    style={{ width: `${pct}%`, backgroundImage: levelGradient(ep.number) }}
                   />
                 )
               )}
